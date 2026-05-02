@@ -38,7 +38,7 @@ type SavedLocation = {
 };
 
 const savedLocationKey = "wnk-selected-location";
-const currentCachePrefix = "wnk-current-conditions";
+const currentCachePrefix = "wnk-open-meteo-current";
 const currentCacheTtl = 5 * 60 * 1000;
 const fallbackLocationLabel = "Louisville, KY";
 
@@ -98,31 +98,6 @@ function buildDailyCards(periods: ForecastPeriod[]) {
   }
 
   return cards;
-}
-
-function celsiusToFahrenheit(value: number) {
-  return Math.round((value * 9) / 5 + 32);
-}
-
-function formatTemperatureValue(value?: number | null, unitCode?: string) {
-  if (typeof value !== "number") {
-    return "--";
-  }
-
-  if (unitCode?.toLowerCase().includes("degc")) {
-    return `${celsiusToFahrenheit(value)}°`;
-  }
-
-  return `${Math.round(value)}°`;
-}
-
-function formatWindGust(value?: number | null, unitCode?: string) {
-  if (typeof value !== "number") {
-    return "--";
-  }
-
-  const converted = unitCode?.toLowerCase().includes("km_h") ? Math.round(value * 0.621371) : Math.round(value);
-  return `${converted} mph`;
 }
 
 function isSavedLocation(value: unknown): value is SavedLocation {
@@ -197,6 +172,7 @@ function countyMatchesAlert(countyLabel: string, alert: WeatherAlert) {
 
 export function HomeWeather({ alerts, forecastOverride, georgeForecastUpdatedAt, isLive, liveVideoId }: HomeWeatherProps) {
   const [location, setLocation] = useState<GeoState | null>(null);
+  const [debouncedLocation, setDebouncedLocation] = useState<GeoState | null>(null);
   const [locationLabel, setLocationLabel] = useState("Detecting location...");
   const [activeCounty, setActiveCounty] = useState<string | null>(null);
   const [forecast, setForecast] = useState<PointForecast | null>(null);
@@ -210,28 +186,17 @@ export function HomeWeather({ alerts, forecastOverride, georgeForecastUpdatedAt,
   const requestIdRef = useRef(0);
 
   const sevenDayCards = useMemo(() => buildDailyCards(forecast?.periods ?? []), [forecast]);
-  const current = forecast?.periods[0];
   const observed = currentConditions;
-  const currentSummary = observed?.textDescription ?? current?.shortForecast;
-  const currentTemperature = typeof observed?.temperature === "number" ? `${observed.temperature}\u00b0` : current ? `${current.temperature}\u00b0` : "--";
+  const currentSummary = observed?.textDescription;
+  const currentTemperature = typeof observed?.temperature === "number" ? `${observed.temperature}\u00b0` : "--";
   const CurrentIcon = getWeatherIcon(currentSummary);
-  const feelsLike =
-    typeof observed?.feelsLike === "number"
-      ? `${observed.feelsLike}\u00b0`
-      : formatTemperatureValue(current?.apparentTemperature?.value, current?.apparentTemperature?.unitCode);
-  const humidity =
-    typeof observed?.humidity === "number"
-      ? `${observed.humidity}%`
-      : typeof current?.relativeHumidity?.value === "number"
-        ? `${current.relativeHumidity.value}%`
-        : "--";
+  const feelsLike = typeof observed?.feelsLike === "number" ? `${observed.feelsLike}\u00b0` : "--";
+  const humidity = typeof observed?.humidity === "number" ? `${observed.humidity}%` : "--";
   const windDisplay =
     typeof observed?.windSpeed === "number"
       ? `${observed.windSpeed} mph${observed.windDirection ? ` ${observed.windDirection}` : ""}`
-      : current
-        ? `${current.windSpeed} ${current.windDirection}`
-        : "Waiting";
-  const windGust = typeof observed?.windGust === "number" ? `${observed.windGust} mph` : formatWindGust(current?.windGust?.value, current?.windGust?.unitCode);
+      : "--";
+  const windGust = typeof observed?.windGust === "number" ? `${observed.windGust} mph` : "--";
   const locationAlerts = useMemo(
     () => (activeCounty ? alerts.filter((alert) => countyMatchesAlert(activeCounty, alert)) : []),
     [activeCounty, alerts]
@@ -243,6 +208,8 @@ export function HomeWeather({ alerts, forecastOverride, georgeForecastUpdatedAt,
 
   const applyFallbackLocation = useCallback((messageText = "Location unavailable. Showing Louisville, KY.") => {
     requestIdRef.current += 1;
+    setForecast(null);
+    setCurrentConditions(null);
     setLocation(kentuckyDefault);
     setLocationLabel(fallbackLocationLabel);
     setActiveCounty("Jefferson");
@@ -254,7 +221,7 @@ export function HomeWeather({ alerts, forecastOverride, georgeForecastUpdatedAt,
     requestIdRef.current = selectionId;
     const previousLabel = locationLabelRef.current;
     setLocationLabel("Detecting location...");
-    setMessage("Requesting your current location...");
+    setMessage("Detecting location...");
 
     if (!navigator.geolocation) {
       if (fallbackOnFailure) {
@@ -297,7 +264,7 @@ export function HomeWeather({ alerts, forecastOverride, georgeForecastUpdatedAt,
         setLocationLabel(previousLabel && previousLabel !== "Detecting location..." ? previousLabel : "Detected Location");
         setMessage(
           error.code === error.PERMISSION_DENIED
-            ? "Location permission denied. Enter a city or ZIP code instead."
+            ? "Location access denied. Enter city or ZIP manually."
             : "Unable to access device location. Enter a city or ZIP code instead."
         );
       },
@@ -330,22 +297,30 @@ export function HomeWeather({ alerts, forecastOverride, georgeForecastUpdatedAt,
       }
     }
 
-    requestDeviceLocation(true);
-  }, [requestDeviceLocation]);
+    applyFallbackLocation("Location unavailable. Showing Louisville, KY.");
+  }, [applyFallbackLocation]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedLocation(location);
+    }, 400);
+
+    return () => window.clearTimeout(timer);
+  }, [location]);
 
   useEffect(() => {
     let ignore = false;
     const controller = new AbortController();
 
     async function loadForecast() {
-      if (!location) {
+      if (!debouncedLocation) {
         return;
       }
 
       setIsLoading(true);
       const fetchId = requestIdRef.current;
       try {
-        const response = await fetch(`/api/forecast?lat=${location.lat}&lon=${location.lon}`, { signal: controller.signal });
+        const response = await fetch(`/api/forecast?lat=${debouncedLocation.lat}&lon=${debouncedLocation.lon}`, { signal: controller.signal });
         const data: PointForecast & { locationLabel?: string; countyLabel?: string; error?: string } = await response.json();
 
         if (!response.ok) {
@@ -356,12 +331,12 @@ export function HomeWeather({ alerts, forecastOverride, georgeForecastUpdatedAt,
           setForecast(data);
           setActiveCounty((currentCounty) => data.countyLabel ?? currentCounty);
 
-          if (location.source === "fallback") {
+          if (debouncedLocation.source === "fallback") {
             setLocationLabel(fallbackLocationLabel);
-          } else if (location.source === "detected" && data.locationLabel) {
+          } else if (debouncedLocation.source === "detected" && data.locationLabel) {
             setLocationLabel(data.locationLabel);
             setMessage("Using your current location");
-          } else if (location.source === "detected") {
+          } else if (debouncedLocation.source === "detected") {
             setLocationLabel("Detected Location");
             setMessage("Unable to determine exact city. Showing forecast for your detected location.");
           }
@@ -384,18 +359,18 @@ export function HomeWeather({ alerts, forecastOverride, georgeForecastUpdatedAt,
       ignore = true;
       controller.abort();
     };
-  }, [location]);
+  }, [debouncedLocation]);
 
   useEffect(() => {
     let ignore = false;
     const controller = new AbortController();
 
     async function loadCurrentConditions() {
-      if (!location) {
+      if (!debouncedLocation) {
         return;
       }
 
-      const cached = readCachedCurrent(location);
+      const cached = readCachedCurrent(debouncedLocation);
       const fetchId = requestIdRef.current;
 
       if (cached?.currentConditions) {
@@ -408,7 +383,7 @@ export function HomeWeather({ alerts, forecastOverride, georgeForecastUpdatedAt,
       }
 
       try {
-        const response = await fetch(`/api/current?lat=${location.lat}&lon=${location.lon}`, { signal: controller.signal });
+        const response = await fetch(`/api/current?lat=${debouncedLocation.lat}&lon=${debouncedLocation.lon}`, { signal: controller.signal });
         const data: CurrentApiResponse = await response.json();
 
         if (!response.ok) {
@@ -416,11 +391,11 @@ export function HomeWeather({ alerts, forecastOverride, georgeForecastUpdatedAt,
         }
 
         if (!ignore && requestIdRef.current === fetchId) {
-          writeCachedCurrent(location, data);
+          writeCachedCurrent(debouncedLocation, data);
           setCurrentConditions(data.currentConditions ?? null);
           setActiveCounty((currentCounty) => data.countyLabel ?? currentCounty);
 
-          if (location.source === "detected") {
+          if (debouncedLocation.source === "detected") {
             if (data.locationLabel) {
               setLocationLabel(data.locationLabel);
               setMessage("Using your current location");
@@ -447,7 +422,7 @@ export function HomeWeather({ alerts, forecastOverride, georgeForecastUpdatedAt,
       ignore = true;
       controller.abort();
     };
-  }, [location]);
+  }, [debouncedLocation]);
 
   async function handleLocationSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -516,7 +491,7 @@ export function HomeWeather({ alerts, forecastOverride, georgeForecastUpdatedAt,
             <p className="current-temp">{currentTemperature}</p>
             <CurrentIcon aria-hidden="true" className="current-icon" />
           </div>
-          <h1>{currentSummary ?? "Loading forecast"}</h1>
+          <h1>{currentSummary ?? "Loading current conditions"}</h1>
           <p className="current-location">
             <MapPin aria-hidden="true" size={17} />
             {locationLabel}
@@ -536,7 +511,7 @@ export function HomeWeather({ alerts, forecastOverride, georgeForecastUpdatedAt,
               </button>
             </div>
             <button className="location-current-button" onClick={() => requestDeviceLocation(false)} type="button">
-              Use my current location
+              Use My Current Location
             </button>
           </form>
         </div>
@@ -568,6 +543,7 @@ export function HomeWeather({ alerts, forecastOverride, georgeForecastUpdatedAt,
               {observed.updatedAt ? `Updated: ${observed.updatedAt}` : null}
             </p>
           ) : null}
+          <p className="observation-note">Current conditions powered by Open-Meteo.</p>
           <p className="location-note">{message}</p>
           <button
             className="button refresh-button"

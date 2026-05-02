@@ -108,6 +108,19 @@ const latestObservationSchema = z.object({
   })
 });
 
+const openMeteoCurrentSchema = z.object({
+  current: z.object({
+    time: z.string().optional(),
+    temperature_2m: z.number().nullable().optional(),
+    relative_humidity_2m: z.number().nullable().optional(),
+    apparent_temperature: z.number().nullable().optional(),
+    weather_code: z.number().nullable().optional(),
+    wind_speed_10m: z.number().nullable().optional(),
+    wind_direction_10m: z.number().nullable().optional(),
+    wind_gusts_10m: z.number().nullable().optional()
+  })
+});
+
 const alertSchema = z.object({
   id: z.string(),
   properties: z.object({
@@ -147,6 +160,7 @@ export type CurrentConditions = {
   textDescription?: string;
   observedAt?: string;
   updatedAt?: string;
+  source?: string;
 };
 
 export type PointForecast = {
@@ -264,6 +278,85 @@ function normalizeCounty(county?: string) {
   return county?.replace(/\s+County$/i, "").trim();
 }
 
+function openMeteoCodeToText(code?: number | null) {
+  if (typeof code !== "number") {
+    return undefined;
+  }
+
+  const labels: Record<number, string> = {
+    0: "Clear",
+    1: "Mainly Clear",
+    2: "Partly Cloudy",
+    3: "Cloudy",
+    45: "Fog",
+    48: "Freezing Fog",
+    51: "Light Drizzle",
+    53: "Drizzle",
+    55: "Heavy Drizzle",
+    56: "Light Freezing Drizzle",
+    57: "Freezing Drizzle",
+    61: "Light Rain",
+    63: "Rain",
+    65: "Heavy Rain",
+    66: "Light Freezing Rain",
+    67: "Freezing Rain",
+    71: "Light Snow",
+    73: "Snow",
+    75: "Heavy Snow",
+    77: "Snow Grains",
+    80: "Light Showers",
+    81: "Showers",
+    82: "Heavy Showers",
+    85: "Snow Showers",
+    86: "Heavy Snow Showers",
+    95: "Thunderstorms",
+    96: "Thunderstorms With Hail",
+    99: "Severe Thunderstorms With Hail"
+  };
+
+  return labels[code] ?? "Current Conditions";
+}
+
+async function getOpenMeteoCurrentConditions(lat: number, lon: number): Promise<CurrentConditions | undefined> {
+  const url = new URL("https://api.open-meteo.com/v1/forecast");
+  url.searchParams.set("latitude", String(lat));
+  url.searchParams.set("longitude", String(lon));
+  url.searchParams.set(
+    "current",
+    "temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m"
+  );
+  url.searchParams.set("temperature_unit", "fahrenheit");
+  url.searchParams.set("wind_speed_unit", "mph");
+  url.searchParams.set("timezone", "auto");
+
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/json"
+    },
+    next: { revalidate: 120 }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Open-Meteo request failed: ${response.status} ${response.statusText}`);
+  }
+
+  const data = openMeteoCurrentSchema.parse(await response.json());
+  const current = data.current;
+
+  return {
+    temperature: typeof current.temperature_2m === "number" ? Math.round(current.temperature_2m) : undefined,
+    feelsLike: typeof current.apparent_temperature === "number" ? Math.round(current.apparent_temperature) : undefined,
+    humidity: typeof current.relative_humidity_2m === "number" ? Math.round(current.relative_humidity_2m) : undefined,
+    windSpeed: typeof current.wind_speed_10m === "number" ? Math.round(current.wind_speed_10m) : undefined,
+    windDirection: degreesToCompass(current.wind_direction_10m),
+    windGust: typeof current.wind_gusts_10m === "number" ? Math.round(current.wind_gusts_10m) : undefined,
+    textDescription: openMeteoCodeToText(current.weather_code),
+    observedAt: "Open-Meteo",
+    updatedAt: formatObservationTime(current.time),
+    source: "Open-Meteo"
+  };
+}
+
 async function getLatestCurrentConditions(observationStations?: string): Promise<CurrentConditions | undefined> {
   if (!observationStations) {
     return undefined;
@@ -324,13 +417,16 @@ export async function getPointForecast(lat: number, lon: number): Promise<PointF
 }
 
 export async function getPointCurrentConditions(lat: number, lon: number): Promise<CurrentConditionsResponse> {
-  const point = pointSchema.parse(await fetchJson(`${weatherBase}/points/${lat.toFixed(4)},${lon.toFixed(4)}`, 300));
+  const [point, currentConditions] = await Promise.all([
+    fetchJson(`${weatherBase}/points/${lat.toFixed(4)},${lon.toFixed(4)}`, 300).then((data) => pointSchema.parse(data)),
+    getOpenMeteoCurrentConditions(lat, lon)
+  ]);
   const city = point.properties.relativeLocation?.properties.city;
   const state = point.properties.relativeLocation?.properties.state;
   const county = normalizeCounty(point.properties.relativeLocation?.properties.county);
 
   return {
-    currentConditions: await getLatestCurrentConditions(point.properties.observationStations),
+    currentConditions,
     locationLabel: city && state ? `${city}, ${state}` : undefined,
     countyLabel: county
   };
