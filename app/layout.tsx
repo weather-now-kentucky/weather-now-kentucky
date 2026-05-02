@@ -1,3 +1,5 @@
+import { Analytics } from "@vercel/analytics/next";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { LiveNowBanner } from "@/components/LiveNowBanner";
@@ -70,7 +72,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               Weather Now Kentucky uses National Weather Service data for public weather information.
             </div>
           </footer>
-        </div>
+         </div>
+        <Analytics />
+       <SpeedInsights />
       </body>
     </html>
   );
