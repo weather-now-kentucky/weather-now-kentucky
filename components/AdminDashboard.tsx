@@ -2,19 +2,24 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User } from "firebase/auth";
-import { Edit3, LogIn, LogOut, Plus, Save } from "lucide-react";
+import { Edit3, LogIn, LogOut, Plus, Save, Trash2 } from "lucide-react";
 import { getFirebaseServices, isFirebaseConfigured } from "@/lib/firebase";
 import {
+  deleteTeamMember,
   getBlogPosts,
   getSiteSettings,
   getSponsors,
+  getTeamMembers,
   saveBlogPost,
   saveSiteSettings,
   saveSponsor,
+  saveTeamMember,
+  updateTeamMember,
   updateBlogPost,
   type BlogPost,
   type SiteSettings,
-  type Sponsor
+  type Sponsor,
+  type TeamMember
 } from "@/lib/content";
 
 const emptyPost = {
@@ -31,6 +36,15 @@ const emptySponsor = {
   logoUrl: ""
 };
 
+const emptyTeamMember = {
+  name: "",
+  role: "",
+  bio: "",
+  imageUrl: "",
+  linkUrl: "",
+  order: 0
+};
+
 export function AdminDashboard() {
   const configured = useMemo(() => isFirebaseConfigured(), []);
   const [user, setUser] = useState<User | null>(null);
@@ -43,6 +57,9 @@ export function AdminDashboard() {
   const [postForm, setPostForm] = useState(emptyPost);
   const [sponsors, setSponsors] = useState<Sponsor[]>([]);
   const [sponsorForm, setSponsorForm] = useState(emptySponsor);
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [selectedTeamMemberId, setSelectedTeamMemberId] = useState("");
+  const [teamMemberForm, setTeamMemberForm] = useState(emptyTeamMember);
 
   useEffect(() => {
     if (!configured) {
@@ -59,15 +76,17 @@ export function AdminDashboard() {
     }
 
     async function loadAdminData() {
-      const [loadedSettings, loadedPosts, loadedSponsors] = await Promise.all([
+      const [loadedSettings, loadedPosts, loadedSponsors, loadedTeamMembers] = await Promise.all([
         getSiteSettings(),
         getBlogPosts(false),
-        getSponsors(false)
+        getSponsors(false),
+        getTeamMembers(false)
       ]);
 
       setSettings(loadedSettings);
       setPosts(loadedPosts);
       setSponsors(loadedSponsors);
+      setTeamMembers(loadedTeamMembers);
     }
 
     loadAdminData().catch((error) => setMessage(error instanceof Error ? error.message : "Unable to load admin data."));
@@ -132,6 +151,27 @@ export function AdminDashboard() {
     }
   }
 
+  async function handleTeamMember(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage("");
+
+    try {
+      if (selectedTeamMemberId) {
+        await updateTeamMember(selectedTeamMemberId, teamMemberForm);
+        setMessage("Team member updated.");
+      } else {
+        await saveTeamMember(teamMemberForm);
+        setMessage("Team member added.");
+      }
+
+      setTeamMemberForm(emptyTeamMember);
+      setSelectedTeamMemberId("");
+      setTeamMembers(await getTeamMembers(false));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to save team member.");
+    }
+  }
+
   function editPost(post: BlogPost) {
     setSelectedPostId(post.id);
     setPostForm({
@@ -140,6 +180,40 @@ export function AdminDashboard() {
       excerpt: post.excerpt,
       body: post.body
     });
+  }
+
+  function editTeamMember(member: TeamMember) {
+    setSelectedTeamMemberId(member.id);
+    setTeamMemberForm({
+      name: member.name,
+      role: member.role,
+      bio: member.bio,
+      imageUrl: member.imageUrl,
+      linkUrl: member.linkUrl,
+      order: member.order
+    });
+  }
+
+  async function removeTeamMember(member: TeamMember) {
+    const shouldRemove = window.confirm(`Remove ${member.name} from the team page?`);
+
+    if (!shouldRemove) {
+      return;
+    }
+
+    try {
+      await deleteTeamMember(member.id);
+      setMessage("Team member removed.");
+
+      if (selectedTeamMemberId === member.id) {
+        setSelectedTeamMemberId("");
+        setTeamMemberForm(emptyTeamMember);
+      }
+
+      setTeamMembers(await getTeamMembers(false));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to remove team member.");
+    }
   }
 
   if (!configured) {
@@ -344,6 +418,106 @@ export function AdminDashboard() {
               {sponsor.name}
             </span>
           ))}
+        </div>
+      </div>
+
+      <div className="grid two">
+        <form className="panel admin-form" onSubmit={handleTeamMember}>
+          <h2>{selectedTeamMemberId ? "Edit team member" : "Add team member"}</h2>
+          <div className="field">
+            <label htmlFor="teamName">Name</label>
+            <input
+              className="input"
+              id="teamName"
+              onChange={(event) => setTeamMemberForm({ ...teamMemberForm, name: event.target.value })}
+              required
+              value={teamMemberForm.name}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="teamRole">Role / Position</label>
+            <input
+              className="input"
+              id="teamRole"
+              onChange={(event) => setTeamMemberForm({ ...teamMemberForm, role: event.target.value })}
+              required
+              value={teamMemberForm.role}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="teamBio">Bio</label>
+            <textarea
+              className="textarea"
+              id="teamBio"
+              onChange={(event) => setTeamMemberForm({ ...teamMemberForm, bio: event.target.value })}
+              required
+              value={teamMemberForm.bio}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="teamImage">Headshot photo URL</label>
+            <input
+              className="input"
+              id="teamImage"
+              onChange={(event) => setTeamMemberForm({ ...teamMemberForm, imageUrl: event.target.value })}
+              type="url"
+              value={teamMemberForm.imageUrl}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="teamLink">Optional social/link URL</label>
+            <input
+              className="input"
+              id="teamLink"
+              onChange={(event) => setTeamMemberForm({ ...teamMemberForm, linkUrl: event.target.value })}
+              type="url"
+              value={teamMemberForm.linkUrl}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="teamOrder">Sort/order number</label>
+            <input
+              className="input"
+              id="teamOrder"
+              onChange={(event) => setTeamMemberForm({ ...teamMemberForm, order: Number(event.target.value) })}
+              type="number"
+              value={teamMemberForm.order}
+            />
+          </div>
+          <div className="admin-actions">
+            <button className="button" type="submit">
+              {selectedTeamMemberId ? <Save aria-hidden="true" size={16} /> : <Plus aria-hidden="true" size={16} />}
+              {selectedTeamMemberId ? "Update member" : "Add member"}
+            </button>
+            {selectedTeamMemberId ? (
+              <button
+                className="button ghost"
+                onClick={() => {
+                  setSelectedTeamMemberId("");
+                  setTeamMemberForm(emptyTeamMember);
+                }}
+                type="button"
+              >
+                Cancel
+              </button>
+            ) : null}
+          </div>
+        </form>
+
+        <div className="panel admin-list">
+          <h2>Team members</h2>
+          {teamMembers.map((member) => (
+            <div className="list-row admin-list-row" key={member.id}>
+              <button className="list-row-main" onClick={() => editTeamMember(member)} type="button">
+                <Edit3 aria-hidden="true" size={16} />
+                {member.order}. {member.name}
+              </button>
+              <button className="icon-danger" onClick={() => removeTeamMember(member)} type="button" aria-label={`Remove ${member.name}`}>
+                <Trash2 aria-hidden="true" size={16} />
+              </button>
+            </div>
+          ))}
+          {teamMembers.length === 0 ? <p className="status-line">No Firestore team members yet. The public page shows placeholders.</p> : null}
         </div>
       </div>
     </section>

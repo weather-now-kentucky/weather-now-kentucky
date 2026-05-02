@@ -1,5 +1,4 @@
 import { HomeWeather } from "@/components/HomeWeather";
-import { WeatherAlertBanner } from "@/components/WeatherAlertBanner";
 import { getSiteSettings } from "@/lib/content";
 import { getKentuckyAlerts, type WeatherAlert } from "@/lib/weather";
 
@@ -21,8 +20,8 @@ export default async function HomePage() {
 
   return (
     <>
-      <WeatherAlertBanner alerts={alerts} />
       <HomeWeather
+        alerts={alerts}
         forecastOverride={settings.forecastOverride}
         georgeForecastUpdatedAt={georgeForecastUpdatedAt}
         isLive={settings.isLive}

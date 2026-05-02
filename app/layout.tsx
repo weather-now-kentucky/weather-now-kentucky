@@ -20,6 +20,7 @@ const navItems = [
   { href: "/radar", label: "Radar" },
   { href: "/alerts", label: "Alerts" },
   { href: "/live", label: "Live" },
+  { href: "/team", label: "Team" },
   { href: "/blog", label: "Blog" },
   { href: "/sponsors", label: "Sponsors" },
   { href: "/admin", label: "Admin" }
@@ -47,8 +48,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <div className="top-bar-inner">
               <div className="brand-row">
                 <Link className="brand" href="/">
+                  <img alt="Weather Now Kentucky logo" className="brand-logo" src="/images/wnk-logo.png" />
+                  <span className="brand-text">
                   <strong>Weather Now Kentucky</strong>
                   <span>Forecasts, alerts, live coverage</span>
+                  </span>
                 </Link>
               </div>
               <nav aria-label="Main navigation" className="nav">

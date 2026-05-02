@@ -78,11 +78,24 @@ button {
 }
 
 .brand {
-  display: grid;
-  gap: 2px;
+  align-items: center;
+  display: flex;
+  gap: 12px;
 }
 
-.brand strong {
+.brand-logo {
+  flex: 0 0 auto;
+  height: auto;
+  width: clamp(52px, 14vw, 90px);
+}
+
+.brand-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.brand-text strong {
   font-size: clamp(1.55rem, 5vw, 2.55rem);
   font-weight: 950;
   line-height: 1;
@@ -90,7 +103,7 @@ button {
   text-transform: uppercase;
 }
 
-.brand span {
+.brand-text span {
   color: #c8d2e2;
   font-size: 0.82rem;
   font-weight: 700;
@@ -308,6 +321,41 @@ h3 {
   justify-content: flex-start;
   padding: 10px 12px;
   text-align: left;
+}
+
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.admin-list-row {
+  justify-content: space-between;
+}
+
+.list-row-main {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  display: inline-flex;
+  flex: 1;
+  font-weight: 800;
+  gap: 8px;
+  justify-content: flex-start;
+  padding: 0;
+  text-align: left;
+}
+
+.icon-danger {
+  align-items: center;
+  background: #fee2e2;
+  border: 1px solid #fecaca;
+  border-radius: 4px;
+  color: #991b1b;
+  display: inline-flex;
+  justify-content: center;
+  padding: 7px;
 }
 
 @media (min-width: 740px) {

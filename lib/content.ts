@@ -1,6 +1,7 @@
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -37,6 +38,16 @@ export type Sponsor = {
   logoUrl: string;
 };
 
+export type TeamMember = {
+  id: string;
+  name: string;
+  role: string;
+  bio: string;
+  imageUrl: string;
+  linkUrl: string;
+  order: number;
+};
+
 const fallbackSettings: SiteSettings = {
   forecastOverride: "",
   isLive: false,
@@ -61,6 +72,27 @@ const fallbackSponsors: Sponsor[] = [
     description: "Sponsor tiles will populate from Firestore after setup.",
     url: "https://weather.gov",
     logoUrl: ""
+  }
+];
+
+export const fallbackTeamMembers: TeamMember[] = [
+  {
+    id: "george-herbig",
+    name: "George Herbig",
+    role: "Founder / Weather Coverage Lead",
+    bio: "Kentucky-focused weather coverage, live severe weather updates, forecasting, and community communication.",
+    imageUrl: "",
+    linkUrl: "",
+    order: 1
+  },
+  {
+    id: "geobot",
+    name: "GeoBot",
+    role: "Live Weather Assistant",
+    bio: "Automated weather assistant for live storm reports, alerts, and broadcast support.",
+    imageUrl: "",
+    linkUrl: "",
+    order: 2
   }
 ];
 
@@ -110,6 +142,18 @@ function mapSponsor(id: string, data: DocumentData): Sponsor {
   };
 }
 
+function mapTeamMember(id: string, data: DocumentData): TeamMember {
+  return {
+    id,
+    name: String(data.name ?? "Team Member"),
+    role: String(data.role ?? ""),
+    bio: String(data.bio ?? ""),
+    imageUrl: String(data.imageUrl ?? ""),
+    linkUrl: String(data.linkUrl ?? ""),
+    order: typeof data.order === "number" ? data.order : 999
+  };
+}
+
 export async function getSiteSettings(): Promise<SiteSettings> {
   if (!isFirebaseConfigured()) {
     return fallbackSettings;
@@ -155,6 +199,18 @@ export async function getSponsors(includeFallback = true): Promise<Sponsor[]> {
   return sponsors.length ? sponsors : includeFallback ? fallbackSponsors : [];
 }
 
+export async function getTeamMembers(includeFallback = true): Promise<TeamMember[]> {
+  if (!isFirebaseConfigured()) {
+    return includeFallback ? fallbackTeamMembers : [];
+  }
+
+  const db = getFirebaseDb();
+  const snapshot = await getDocs(query(collection(db, "teamMembers"), orderBy("order", "asc")));
+  const members = snapshot.docs.map((member) => mapTeamMember(member.id, member.data()));
+
+  return members.length ? members : includeFallback ? fallbackTeamMembers : [];
+}
+
 export async function saveSiteSettings(settings: SiteSettings) {
   const db = getFirebaseDb();
   await setDoc(doc(db, "settings", "site"), settings, { merge: true });
@@ -180,4 +236,19 @@ export async function updateBlogPost(id: string, post: Omit<BlogPost, "id" | "pu
 export async function saveSponsor(sponsor: Omit<Sponsor, "id">) {
   const db = getFirebaseDb();
   await addDoc(collection(db, "sponsors"), sponsor);
+}
+
+export async function saveTeamMember(member: Omit<TeamMember, "id">) {
+  const db = getFirebaseDb();
+  await addDoc(collection(db, "teamMembers"), member);
+}
+
+export async function updateTeamMember(id: string, member: Omit<TeamMember, "id">) {
+  const db = getFirebaseDb();
+  await updateDoc(doc(db, "teamMembers", id), member);
+}
+
+export async function deleteTeamMember(id: string) {
+  const db = getFirebaseDb();
+  await deleteDoc(doc(db, "teamMembers", id));
 }
