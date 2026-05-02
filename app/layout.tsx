@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { LiveNowBanner } from "@/components/LiveNowBanner";
 import { SevereModeLabel } from "@/components/SevereModeLabel";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { isSevereWeatherMode } from "@/lib/alertPriority";
 import { getSiteSettings } from "@/lib/content";
 import { getKentuckyAlerts, type WeatherAlert } from "@/lib/weather";
@@ -22,9 +23,9 @@ const navItems = [
   { href: "/radar", label: "Radar" },
   { href: "/alerts", label: "Alerts" },
   { href: "/live", label: "Live" },
+  { href: "/outlook", label: "Outlook" },
   { href: "/team", label: "Team" },
   { href: "/blog", label: "Blog" },
-  { href: "/sponsors", label: "Sponsors" },
   { href: "/admin", label: "Admin" }
 ];
 
@@ -63,6 +64,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                     {item.label}
                   </Link>
                 ))}
+                <ThemeToggle />
               </nav>
             </div>
           </header>

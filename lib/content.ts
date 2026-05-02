@@ -11,6 +11,7 @@ import {
   serverTimestamp,
   setDoc,
   updateDoc,
+  where,
   type DocumentData
 } from "firebase/firestore/lite";
 import { getFirebaseDb, isFirebaseConfigured } from "@/lib/firebase";
@@ -33,9 +34,34 @@ export type BlogPost = {
 export type Sponsor = {
   id: string;
   name: string;
+  businessCategory: string;
+  websiteUrl: string;
+  logoUrl: string;
+  logoStoragePath: string;
+  status: "active" | "inactive";
+  priority: number;
+  startDate?: string;
+  endDate?: string;
+  notes?: string;
+  createdAtLabel?: string;
+  updatedAtLabel?: string;
   description: string;
   url: string;
-  logoUrl: string;
+};
+
+export type SponsorPlacement = {
+  id: string;
+  sectionKey: string;
+  sectionLabel: string;
+  page: "home" | "outlook" | "radar" | "alerts" | "live" | "blog";
+  sponsorId: string;
+  enabled: boolean;
+  displayLabel: string;
+  placementType: "section-header" | "card-footer" | "alert-bar" | "radar-control" | "live-banner";
+  rotationGroup?: string;
+  priority: number;
+  createdAtLabel?: string;
+  updatedAtLabel?: string;
 };
 
 export type TeamMember = {
@@ -43,9 +69,13 @@ export type TeamMember = {
   name: string;
   role: string;
   bio: string;
-  imageUrl: string;
-  linkUrl: string;
+  photoUrl: string;
+  photoStoragePath: string;
+  socialUrl: string;
   order: number;
+  status: "active" | "inactive";
+  createdAtLabel?: string;
+  updatedAtLabel?: string;
 };
 
 const fallbackSettings: SiteSettings = {
@@ -69,32 +99,18 @@ const fallbackSponsors: Sponsor[] = [
   {
     id: "sample-sponsor",
     name: "Community Sponsor",
+    businessCategory: "Community Partner",
+    websiteUrl: "https://weather.gov",
+    logoStoragePath: "",
+    status: "active",
+    priority: 0,
     description: "Sponsor tiles will populate from Firestore after setup.",
     url: "https://weather.gov",
     logoUrl: ""
   }
 ];
 
-export const fallbackTeamMembers: TeamMember[] = [
-  {
-    id: "george-herbig",
-    name: "George Herbig",
-    role: "Founder / Weather Coverage Lead",
-    bio: "Kentucky-focused weather coverage, live severe weather updates, forecasting, and community communication.",
-    imageUrl: "",
-    linkUrl: "",
-    order: 1
-  },
-  {
-    id: "geobot",
-    name: "GeoBot",
-    role: "Live Weather Assistant",
-    bio: "Automated weather assistant for live storm reports, alerts, and broadcast support.",
-    imageUrl: "",
-    linkUrl: "",
-    order: 2
-  }
-];
+export const fallbackTeamMembers: TeamMember[] = [];
 
 function formatDate(value: unknown) {
   const timestamp = value as { toDate?: () => Date } | null;
@@ -133,12 +149,42 @@ function mapPost(id: string, data: DocumentData): BlogPost {
 }
 
 function mapSponsor(id: string, data: DocumentData): Sponsor {
+  const websiteUrl = String(data.websiteUrl ?? data.url ?? "#");
+  const businessCategory = String(data.businessCategory ?? data.description ?? "");
+
   return {
     id,
     name: String(data.name ?? "Sponsor"),
-    description: String(data.description ?? ""),
-    url: String(data.url ?? "#"),
-    logoUrl: String(data.logoUrl ?? "")
+    businessCategory,
+    websiteUrl,
+    logoUrl: String(data.logoUrl ?? ""),
+    logoStoragePath: String(data.logoStoragePath ?? ""),
+    status: data.status === "inactive" ? "inactive" : "active",
+    priority: typeof data.priority === "number" ? data.priority : 0,
+    startDate: String(data.startDate ?? ""),
+    endDate: String(data.endDate ?? ""),
+    notes: String(data.notes ?? ""),
+    createdAtLabel: formatDate(data.createdAt),
+    updatedAtLabel: formatDate(data.updatedAt),
+    description: businessCategory,
+    url: websiteUrl
+  };
+}
+
+function mapSponsorPlacement(id: string, data: DocumentData): SponsorPlacement {
+  return {
+    id,
+    sectionKey: String(data.sectionKey ?? ""),
+    sectionLabel: String(data.sectionLabel ?? data.sectionKey ?? ""),
+    page: String(data.page ?? "home") as SponsorPlacement["page"],
+    sponsorId: String(data.sponsorId ?? ""),
+    enabled: Boolean(data.enabled),
+    displayLabel: String(data.displayLabel ?? "Sponsored by"),
+    placementType: String(data.placementType ?? "section-header") as SponsorPlacement["placementType"],
+    rotationGroup: String(data.rotationGroup ?? ""),
+    priority: typeof data.priority === "number" ? data.priority : 0,
+    createdAtLabel: formatDate(data.createdAt),
+    updatedAtLabel: formatDate(data.updatedAt)
   };
 }
 
@@ -148,9 +194,13 @@ function mapTeamMember(id: string, data: DocumentData): TeamMember {
     name: String(data.name ?? "Team Member"),
     role: String(data.role ?? ""),
     bio: String(data.bio ?? ""),
-    imageUrl: String(data.imageUrl ?? ""),
-    linkUrl: String(data.linkUrl ?? ""),
-    order: typeof data.order === "number" ? data.order : 999
+    photoUrl: String(data.photoUrl ?? data.imageUrl ?? ""),
+    photoStoragePath: String(data.photoStoragePath ?? ""),
+    socialUrl: String(data.socialUrl ?? data.linkUrl ?? ""),
+    order: typeof data.order === "number" ? data.order : 999,
+    status: data.status === "inactive" ? "inactive" : "active",
+    createdAtLabel: formatDate(data.createdAt),
+    updatedAtLabel: formatDate(data.updatedAt)
   };
 }
 
@@ -192,23 +242,86 @@ export async function getSponsors(includeFallback = true): Promise<Sponsor[]> {
     return includeFallback ? fallbackSponsors : [];
   }
 
-  const db = getFirebaseDb();
-  const snapshot = await getDocs(query(collection(db, "sponsors"), orderBy("name", "asc")));
-  const sponsors = snapshot.docs.map((sponsor) => mapSponsor(sponsor.id, sponsor.data()));
+  try {
+    const db = getFirebaseDb();
+    const snapshot = await getDocs(query(collection(db, "sponsors"), orderBy("priority", "desc")));
+    const sponsors = snapshot.docs.map((sponsor) => mapSponsor(sponsor.id, sponsor.data()));
 
-  return sponsors.length ? sponsors : includeFallback ? fallbackSponsors : [];
+    return sponsors.length ? sponsors : includeFallback ? fallbackSponsors : [];
+  } catch (error) {
+    console.error("Unable to load sponsors from Firestore.", error);
+    return includeFallback ? fallbackSponsors : [];
+  }
 }
 
-export async function getTeamMembers(includeFallback = true): Promise<TeamMember[]> {
+export async function getActiveSponsors(): Promise<Sponsor[]> {
+  if (!isFirebaseConfigured()) {
+    return [];
+  }
+
+  try {
+    const db = getFirebaseDb();
+    const snapshot = await getDocs(query(collection(db, "sponsors"), where("status", "==", "active")));
+    return snapshot.docs.map((sponsor) => mapSponsor(sponsor.id, sponsor.data())).sort((a, b) => b.priority - a.priority);
+  } catch (error) {
+    console.error("Unable to load active sponsors from Firestore.", error);
+    return [];
+  }
+}
+
+export async function getSponsorPlacements(includeFallback = false): Promise<SponsorPlacement[]> {
+  if (!isFirebaseConfigured()) {
+    return [];
+  }
+
+  try {
+    const db = getFirebaseDb();
+    const snapshot = await getDocs(query(collection(db, "sponsorPlacements"), orderBy("sectionKey", "asc")));
+    const placements = snapshot.docs.map((placement) => mapSponsorPlacement(placement.id, placement.data()));
+
+    return placements.length ? placements : includeFallback ? [] : [];
+  } catch (error) {
+    console.error("Unable to load sponsor placements from Firestore.", error);
+    return [];
+  }
+}
+
+export async function getSponsorPlacementsForSection(sectionKey: string): Promise<SponsorPlacement[]> {
+  if (!isFirebaseConfigured()) {
+    return [];
+  }
+
+  try {
+    const db = getFirebaseDb();
+    const snapshot = await getDocs(query(collection(db, "sponsorPlacements"), where("sectionKey", "==", sectionKey), where("enabled", "==", true)));
+    return snapshot.docs.map((placement) => mapSponsorPlacement(placement.id, placement.data()));
+  } catch (error) {
+    console.error(`Unable to load sponsor placements for ${sectionKey}.`, error);
+    return [];
+  }
+}
+
+export async function getTeamMembers(includeFallback = true, publicOnly = includeFallback): Promise<TeamMember[]> {
   if (!isFirebaseConfigured()) {
     return includeFallback ? fallbackTeamMembers : [];
   }
 
-  const db = getFirebaseDb();
-  const snapshot = await getDocs(query(collection(db, "teamMembers"), orderBy("order", "asc")));
-  const members = snapshot.docs.map((member) => mapTeamMember(member.id, member.data()));
+  try {
+    const db = getFirebaseDb();
+    const teamQuery = publicOnly
+      ? query(collection(db, "teamMembers"), where("status", "==", "active"))
+      : query(collection(db, "teamMembers"), orderBy("order", "asc"));
+    const snapshot = await getDocs(teamQuery);
+    const members = snapshot.docs
+      .map((member) => mapTeamMember(member.id, member.data()))
+      .filter((member) => !publicOnly || member.status === "active")
+      .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
 
-  return members.length ? members : includeFallback ? fallbackTeamMembers : [];
+    return members.length ? members : includeFallback ? fallbackTeamMembers : [];
+  } catch (error) {
+    console.error("Unable to load team members from Firestore.", error);
+    return includeFallback ? fallbackTeamMembers : [];
+  }
 }
 
 export async function saveSiteSettings(settings: SiteSettings) {
@@ -233,19 +346,57 @@ export async function updateBlogPost(id: string, post: Omit<BlogPost, "id" | "pu
   });
 }
 
-export async function saveSponsor(sponsor: Omit<Sponsor, "id">) {
+export async function saveSponsor(sponsor: Omit<Sponsor, "id" | "description" | "url" | "createdAtLabel" | "updatedAtLabel">) {
   const db = getFirebaseDb();
-  await addDoc(collection(db, "sponsors"), sponsor);
+  const created = await addDoc(collection(db, "sponsors"), {
+    ...sponsor,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  });
+  return created.id;
 }
 
-export async function saveTeamMember(member: Omit<TeamMember, "id">) {
+export async function updateSponsor(id: string, sponsor: Omit<Sponsor, "id" | "description" | "url" | "createdAtLabel" | "updatedAtLabel">) {
   const db = getFirebaseDb();
-  await addDoc(collection(db, "teamMembers"), member);
+  await updateDoc(doc(db, "sponsors", id), {
+    ...sponsor,
+    updatedAt: serverTimestamp()
+  });
 }
 
-export async function updateTeamMember(id: string, member: Omit<TeamMember, "id">) {
+export async function saveSponsorPlacement(placement: Omit<SponsorPlacement, "id" | "createdAtLabel" | "updatedAtLabel">) {
   const db = getFirebaseDb();
-  await updateDoc(doc(db, "teamMembers", id), member);
+  await addDoc(collection(db, "sponsorPlacements"), {
+    ...placement,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  });
+}
+
+export async function updateSponsorPlacement(id: string, placement: Omit<SponsorPlacement, "id" | "createdAtLabel" | "updatedAtLabel">) {
+  const db = getFirebaseDb();
+  await updateDoc(doc(db, "sponsorPlacements", id), {
+    ...placement,
+    updatedAt: serverTimestamp()
+  });
+}
+
+export async function saveTeamMember(member: Omit<TeamMember, "id" | "createdAtLabel" | "updatedAtLabel">) {
+  const db = getFirebaseDb();
+  const created = await addDoc(collection(db, "teamMembers"), {
+    ...member,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  });
+  return created.id;
+}
+
+export async function updateTeamMember(id: string, member: Omit<TeamMember, "id" | "createdAtLabel" | "updatedAtLabel">) {
+  const db = getFirebaseDb();
+  await updateDoc(doc(db, "teamMembers", id), {
+    ...member,
+    updatedAt: serverTimestamp()
+  });
 }
 
 export async function deleteTeamMember(id: string) {

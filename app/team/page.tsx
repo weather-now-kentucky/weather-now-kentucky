@@ -14,9 +14,13 @@ export default async function TeamPage() {
         <p className="lede">The people behind the forecasts, live coverage, and Kentucky weather updates.</p>
       </section>
       <section className="team-grid">
-        {teamMembers.map((member) => (
+        {teamMembers.length ? (
+          teamMembers.map((member) => (
           <TeamMemberCard key={member.name} member={member} />
-        ))}
+          ))
+        ) : (
+          <p className="panel status-line">No team members have been added yet.</p>
+        )}
       </section>
     </>
   );

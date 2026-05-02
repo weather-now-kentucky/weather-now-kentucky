@@ -1,3 +1,5 @@
+import { SectionSponsorTag } from "@/components/SectionSponsorTag";
+
 export default function RadarPage() {
   return (
     <>
@@ -7,6 +9,7 @@ export default function RadarPage() {
         <p className="lede">
           National Weather Service radar imagery focused on the Ohio Valley and central Kentucky corridor.
         </p>
+        <SectionSponsorTag sectionKey="radar_main" />
       </section>
       <section className="panel">
         <div style={{ aspectRatio: "16 / 10", borderRadius: 8, overflow: "hidden", background: "#111827" }}>

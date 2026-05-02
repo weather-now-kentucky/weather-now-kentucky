@@ -1,5 +1,5 @@
 :root {
-  --bg: #f5f6f8;
+  --bg: #f1f3f5;
   --bg-strong: #ffffff;
   --ink: #111827;
   --muted: #5f6b7a;
@@ -12,6 +12,17 @@
   --warning: #b45309;
   --radius: 8px;
   --shadow: 0 12px 30px rgba(17, 24, 39, 0.08);
+}
+
+[data-theme="dark"] {
+  --bg: #0f172a;
+  --bg-strong: #1e293b;
+  --ink: #f8fafc;
+  --muted: #cbd5e1;
+  --line: #334155;
+  --panel: #172033;
+  --navy: #dbeafe;
+  --shadow: 0 16px 34px rgba(0, 0, 0, 0.28);
 }
 
 * {
@@ -51,6 +62,10 @@ button {
 
 .site-shell.severe-mode {
   background: #dfe3e8;
+}
+
+[data-theme="dark"] .site-shell.severe-mode {
+  background: #111827;
 }
 
 .site-shell.severe-mode .top-bar {
@@ -128,6 +143,23 @@ button {
   min-width: 86px;
   padding: 10px 12px;
   text-align: center;
+  text-transform: uppercase;
+}
+
+.theme-toggle {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 4px;
+  color: #f8fafc;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 0.86rem;
+  font-weight: 800;
+  gap: 6px;
+  justify-content: center;
+  min-width: 86px;
+  padding: 10px 12px;
   text-transform: uppercase;
 }
 
@@ -230,6 +262,26 @@ h3 {
   background: var(--navy);
 }
 
+[data-theme="dark"] .button,
+[data-theme="dark"] .button.secondary {
+  background: #d71920;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+}
+
+[data-theme="dark"] .button:hover,
+[data-theme="dark"] .button.secondary:hover {
+  background: #ef1f29;
+  box-shadow: 0 0 0 3px rgba(215, 25, 32, 0.18);
+}
+
+[data-theme="dark"] .button:disabled,
+[data-theme="dark"] .button.secondary:disabled {
+  background: #334155;
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
 .button.ghost {
   background: transparent;
   border: 1px solid var(--line);
@@ -256,10 +308,16 @@ h3 {
 
 .input,
 .textarea {
+  background: var(--bg-strong);
   border: 1px solid var(--line);
+  color: var(--ink);
   border-radius: 6px;
   padding: 11px 12px;
   width: 100%;
+}
+
+select.input {
+  appearance: auto;
 }
 
 .textarea {
@@ -356,6 +414,42 @@ h3 {
   display: inline-flex;
   justify-content: center;
   padding: 7px;
+}
+
+.admin-sponsor-thumb {
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  height: 34px;
+  object-fit: contain;
+  padding: 3px;
+  width: 54px;
+}
+
+.list-row-main span {
+  display: grid;
+  gap: 3px;
+}
+
+.list-row-main small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.sponsor-logo-preview {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.sponsor-logo-preview img {
+  background: white;
+  display: block;
+  max-height: 52px;
+  max-width: 180px;
+  object-fit: contain;
 }
 
 @media (min-width: 740px) {

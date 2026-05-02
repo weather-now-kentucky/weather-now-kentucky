@@ -1,4 +1,5 @@
 import { AlertBanner } from "@/components/AlertBanner";
+import { SectionSponsorTag } from "@/components/SectionSponsorTag";
 import { getKentuckyAlerts, type WeatherAlert } from "@/lib/weather";
 
 export const dynamic = "force-dynamic";
@@ -19,6 +20,7 @@ export default async function AlertsPage() {
         <span className="eyebrow">Active Alerts</span>
         <h1>Kentucky watches, warnings, and advisories.</h1>
         <p className="lede">Active Weather.gov alerts filtered to Kentucky, including event type, expiration, and affected areas.</p>
+        <SectionSponsorTag sectionKey="alerts_main" />
       </section>
       <section className="grid">
         {error ? <p className="panel">{error}</p> : null}

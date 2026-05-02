@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   Cloud,
   CloudFog,
@@ -9,19 +10,24 @@ import {
   CloudSnow,
   CloudSun,
   Droplets,
+  Eye,
+  Gauge,
   MapPin,
   RefreshCcw,
   Sun,
+  Thermometer,
   Wind
 } from "lucide-react";
-import { ForecastCard } from "@/components/ForecastCard";
-import { GeorgesForecastBox } from "@/components/GeorgesForecastBox";
-import { HomeLivePreview } from "@/components/HomeLivePreview";
-import { KentuckyFocusTiles } from "@/components/KentuckyFocusTiles";
+import { HourlyForecast } from "@/components/HourlyForecast";
+import { IncomingWeatherBar } from "@/components/IncomingWeatherBar";
+import { OutdoorConditions } from "@/components/OutdoorConditions";
+import { SectionSponsorTag } from "@/components/SectionSponsorTag";
 import { WeatherAlertBanner } from "@/components/WeatherAlertBanner";
-import type { CurrentConditions, ForecastPeriod, PointForecast, WeatherAlert } from "@/lib/weather";
+import { getIncomingWeatherAlert } from "@/lib/incomingWeather";
+import { buildWeatherLocation, readWeatherLocation, saveWeatherLocation } from "@/lib/weatherLocation";
+import type { CurrentConditions, HourlyForecastHour, WeatherAlert } from "@/lib/weather";
 
-type LocationSource = "detected" | "fallback" | "searched";
+type LocationSource = "detected" | "default" | "searched";
 
 type GeoState = {
   lat: number;
@@ -29,15 +35,6 @@ type GeoState = {
   source: LocationSource;
 };
 
-type SavedLocation = {
-  lat: number;
-  lon: number;
-  label: string;
-  query: string;
-  countyLabel?: string;
-};
-
-const savedLocationKey = "wnk-selected-location";
 const currentCachePrefix = "wnk-open-meteo-current";
 const currentCacheTtl = 5 * 60 * 1000;
 const fallbackLocationLabel = "Louisville, KY";
@@ -45,7 +42,7 @@ const fallbackLocationLabel = "Louisville, KY";
 const kentuckyDefault: GeoState = {
   lat: 38.2527,
   lon: -85.7585,
-  source: "fallback"
+  source: "default"
 };
 
 function getWeatherIcon(summary = "") {
@@ -78,51 +75,13 @@ function getWeatherIcon(summary = "") {
   return CloudSun;
 }
 
-function buildDailyCards(periods: ForecastPeriod[]) {
-  const cards: { high: number; low: number; period: ForecastPeriod }[] = [];
-
-  for (let index = 0; index < periods.length && cards.length < 7; index += 2) {
-    const period = periods[index];
-    const pairedPeriod = periods[index + 1];
-    const temperatures = [period?.temperature, pairedPeriod?.temperature].filter(
-      (temperature): temperature is number => typeof temperature === "number"
-    );
-
-    if (period && temperatures.length) {
-      cards.push({
-        high: Math.max(...temperatures),
-        low: Math.min(...temperatures),
-        period
-      });
-    }
-  }
-
-  return cards;
-}
-
-function isSavedLocation(value: unknown): value is SavedLocation {
-  const location = value as Partial<SavedLocation>;
-  return (
-    typeof location.lat === "number" &&
-    typeof location.lon === "number" &&
-    Number.isFinite(location.lat) &&
-    Number.isFinite(location.lon) &&
-    typeof location.label === "string" &&
-    typeof location.query === "string" &&
-    (typeof location.countyLabel === "string" || typeof location.countyLabel === "undefined")
-  );
-}
-
 type HomeWeatherProps = {
   alerts: WeatherAlert[];
-  forecastOverride: string;
-  georgeForecastUpdatedAt: string;
-  isLive: boolean;
-  liveVideoId?: string;
 };
 
 type CurrentApiResponse = {
   currentConditions?: CurrentConditions;
+  hourly?: HourlyForecastHour[];
   locationLabel?: string;
   countyLabel?: string;
   error?: string;
@@ -170,37 +129,149 @@ function countyMatchesAlert(countyLabel: string, alert: WeatherAlert) {
     .includes(normalizedCounty);
 }
 
-export function HomeWeather({ alerts, forecastOverride, georgeForecastUpdatedAt, isLive, liveVideoId }: HomeWeatherProps) {
+function conditionClass(summary = "") {
+  const lower = summary.toLowerCase();
+  const hour = new Date().getHours();
+
+  if (hour >= 20 || hour < 6) {
+    return "current-night";
+  }
+
+  if (lower.includes("thunder") || lower.includes("storm")) {
+    return "current-storm";
+  }
+
+  if (lower.includes("snow") || lower.includes("ice") || lower.includes("sleet")) {
+    return "current-winter";
+  }
+
+  if (lower.includes("rain") || lower.includes("shower") || lower.includes("drizzle")) {
+    return "current-rain";
+  }
+
+  if (lower.includes("cloud") || lower.includes("overcast") || lower.includes("fog")) {
+    return "current-cloudy";
+  }
+
+  return "current-clear";
+}
+
+function buildInsight(current: CurrentConditions | null, hourly: HourlyForecastHour[]) {
+  const nextWetHour = hourly.slice(0, 8).find((hour) => (hour.weatherCode ?? 0) >= 51 || (hour.precipChance ?? 0) >= 45);
+  const temp = current?.temperature;
+  const summary = current?.textDescription?.toLowerCase() ?? "";
+
+  if (nextWetHour?.weatherCode && nextWetHour.weatherCode >= 95) {
+    return "Comfortable conditions for now with storms possible later. Keep an eye on radar.";
+  }
+
+  if (nextWetHour) {
+    return "Quiet right now, but rain chances increase soon around your location.";
+  }
+
+  if (summary.includes("rain")) {
+    return "Rain is nearby. Keep an eye on radar over the next hour.";
+  }
+
+  if (typeof temp === "number" && temp <= 45) {
+    return "Cool and quiet right now with Kentucky weather holding steady nearby.";
+  }
+
+  if (typeof temp === "number" && temp >= 85) {
+    return "Warm conditions are in place. Watch heat, humidity, and afternoon storm chances.";
+  }
+
+  return "Conditions look steady for now, with the next few hours worth watching.";
+}
+
+function describeTemperatureTrend(current: CurrentConditions | null, hourly: HourlyForecastHour[]) {
+  const currentTemp = current?.temperature;
+  const laterTemp = hourly[3]?.temperature ?? hourly[2]?.temperature;
+
+  if (typeof currentTemp !== "number" || typeof laterTemp !== "number") {
+    return "Temperature trend will update as hourly data comes in.";
+  }
+
+  const difference = laterTemp - currentTemp;
+
+  if (difference >= 4) {
+    return `Temps rising toward ${laterTemp}\u00b0 over the next few hours.`;
+  }
+
+  if (difference <= -4) {
+    return `Temps easing down toward ${laterTemp}\u00b0 over the next few hours.`;
+  }
+
+  return `Temps holding near ${currentTemp}\u00b0 for the next few hours.`;
+}
+
+function buildWeatherSnapshot(current: CurrentConditions | null, hourly: HourlyForecastHour[]) {
+  const nextRainIndex = hourly.slice(0, 6).findIndex((hour) => (hour.precipChance ?? 0) > 30 || (hour.weatherCode ?? 0) >= 51);
+  const nextRain = nextRainIndex >= 0 ? hourly[nextRainIndex] : undefined;
+  const maxGust = hourly
+    .slice(0, 6)
+    .map((hour) => hour.windGust)
+    .filter((gust): gust is number => typeof gust === "number")
+    .reduce((max, gust) => Math.max(max, gust), current?.windGust ?? 0);
+  const windDirection = current?.windDirection ? `${current.windDirection} ` : "";
+  const summary =
+    nextRain?.weatherCode && nextRain.weatherCode >= 95
+      ? "Storm chances are the main item to watch."
+      : nextRain
+        ? "Rain chances are the next nearby concern."
+        : "No strong weather signal in the next few hours.";
+
+  return [
+    nextRain
+      ? nextRainIndex === 0
+        ? "Rain or showers are nearby over the next hour."
+        : `Rain chance increases in about ${nextRainIndex} hour${nextRainIndex === 1 ? "" : "s"}.`
+      : "No immediate rain signal in the next few hours.",
+    describeTemperatureTrend(current, hourly),
+    maxGust > 0 ? `${windDirection}wind gusts may reach ${maxGust} mph.` : "Wind stays light based on the next few hours.",
+    summary
+  ];
+}
+
+export function HomeWeather({ alerts }: HomeWeatherProps) {
   const [location, setLocation] = useState<GeoState | null>(null);
   const [debouncedLocation, setDebouncedLocation] = useState<GeoState | null>(null);
-  const [locationLabel, setLocationLabel] = useState("Detecting location...");
+  const [locationLabel, setLocationLabel] = useState("Loading location...");
   const [activeCounty, setActiveCounty] = useState<string | null>(null);
-  const [forecast, setForecast] = useState<PointForecast | null>(null);
   const [currentConditions, setCurrentConditions] = useState<CurrentConditions | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [hourlyForecast, setHourlyForecast] = useState<HourlyForecastHour[]>([]);
   const [isCurrentLoading, setIsCurrentLoading] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
-  const [message, setMessage] = useState("Requesting your current location...");
+  const [message, setMessage] = useState("Loading your saved forecast location...");
   const [searchQuery, setSearchQuery] = useState("");
   const locationLabelRef = useRef(locationLabel);
   const requestIdRef = useRef(0);
 
-  const sevenDayCards = useMemo(() => buildDailyCards(forecast?.periods ?? []), [forecast]);
   const observed = currentConditions;
   const currentSummary = observed?.textDescription;
   const currentTemperature = typeof observed?.temperature === "number" ? `${observed.temperature}\u00b0` : "--";
   const CurrentIcon = getWeatherIcon(currentSummary);
   const feelsLike = typeof observed?.feelsLike === "number" ? `${observed.feelsLike}\u00b0` : "--";
   const humidity = typeof observed?.humidity === "number" ? `${observed.humidity}%` : "--";
+  const dewpoint = typeof observed?.dewpoint === "number" ? `${observed.dewpoint}\u00b0` : "--";
   const windDisplay =
     typeof observed?.windSpeed === "number"
       ? `${observed.windSpeed} mph${observed.windDirection ? ` ${observed.windDirection}` : ""}`
       : "--";
   const windGust = typeof observed?.windGust === "number" ? `${observed.windGust} mph` : "--";
+  const pressure = typeof observed?.pressureInHg === "number" ? `${observed.pressureInHg.toFixed(2)} inHg` : "--";
+  const visibility = typeof observed?.visibilityMiles === "number" ? `${observed.visibilityMiles} mi` : "--";
+  const uv = typeof observed?.uvIndex === "number" ? `${observed.uvIndex}${observed.uvLabel ? ` ${observed.uvLabel}` : ""}` : "--";
+  const aqi = typeof observed?.aqi === "number" ? `${observed.aqi}${observed.aqiLabel ? ` ${observed.aqiLabel}` : ""}` : "--";
+  const pm25 = typeof observed?.pm25 === "number" ? `${observed.pm25} ug/m3` : "--";
   const locationAlerts = useMemo(
     () => (activeCounty ? alerts.filter((alert) => countyMatchesAlert(activeCounty, alert)) : []),
     [activeCounty, alerts]
   );
+  const currentVisualClass = conditionClass(currentSummary);
+  const currentInsight = buildInsight(observed, hourlyForecast);
+  const weatherSnapshot = buildWeatherSnapshot(observed, hourlyForecast);
+  const incomingAlert = getIncomingWeatherAlert(locationLabel, observed, hourlyForecast);
 
   useEffect(() => {
     locationLabelRef.current = locationLabel;
@@ -208,8 +279,8 @@ export function HomeWeather({ alerts, forecastOverride, georgeForecastUpdatedAt,
 
   const applyFallbackLocation = useCallback((messageText = "Location unavailable. Showing Louisville, KY.") => {
     requestIdRef.current += 1;
-    setForecast(null);
     setCurrentConditions(null);
+    setHourlyForecast([]);
     setLocation(kentuckyDefault);
     setLocationLabel(fallbackLocationLabel);
     setActiveCounty("Jefferson");
@@ -238,11 +309,17 @@ export function HomeWeather({ alerts, forecastOverride, georgeForecastUpdatedAt,
           return;
         }
 
-        setForecast(null);
         setCurrentConditions(null);
+        setHourlyForecast([]);
         setActiveCounty(null);
-        localStorage.removeItem(savedLocationKey);
         setSearchQuery("");
+        const nextLocation = buildWeatherLocation({
+          displayName: "Detected Location",
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          source: "detected"
+        });
+        saveWeatherLocation(nextLocation);
         setLocation({
           lat: position.coords.latitude,
           lon: position.coords.longitude,
@@ -273,28 +350,20 @@ export function HomeWeather({ alerts, forecastOverride, georgeForecastUpdatedAt,
   }, [applyFallbackLocation]);
 
   useEffect(() => {
-    const saved = localStorage.getItem(savedLocationKey);
+    const saved = readWeatherLocation();
 
     if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-
-        if (isSavedLocation(parsed)) {
-          requestIdRef.current += 1;
-          setSearchQuery(parsed.query);
-          setLocationLabel(parsed.label);
-          setActiveCounty(parsed.countyLabel ?? null);
-          setMessage(`Showing forecast for ${parsed.label}`);
-          setLocation({
-            lat: parsed.lat,
-            lon: parsed.lon,
-            source: "searched"
-          });
-          return;
-        }
-      } catch {
-        localStorage.removeItem(savedLocationKey);
-      }
+      requestIdRef.current += 1;
+      setSearchQuery(saved.query ?? "");
+      setLocationLabel(saved.displayName);
+      setActiveCounty(saved.countyLabel ?? null);
+      setMessage(saved.source === "detected" ? "Using your current location" : `Showing forecast for ${saved.displayName}`);
+      setLocation({
+        lat: saved.latitude,
+        lon: saved.longitude,
+        source: saved.source
+      });
+      return;
     }
 
     applyFallbackLocation("Location unavailable. Showing Louisville, KY.");
@@ -312,59 +381,6 @@ export function HomeWeather({ alerts, forecastOverride, georgeForecastUpdatedAt,
     let ignore = false;
     const controller = new AbortController();
 
-    async function loadForecast() {
-      if (!debouncedLocation) {
-        return;
-      }
-
-      setIsLoading(true);
-      const fetchId = requestIdRef.current;
-      try {
-        const response = await fetch(`/api/forecast?lat=${debouncedLocation.lat}&lon=${debouncedLocation.lon}`, { signal: controller.signal });
-        const data: PointForecast & { locationLabel?: string; countyLabel?: string; error?: string } = await response.json();
-
-        if (!response.ok) {
-          throw new Error((data as { error?: string }).error ?? "Forecast request failed.");
-        }
-
-        if (!ignore && requestIdRef.current === fetchId) {
-          setForecast(data);
-          setActiveCounty((currentCounty) => data.countyLabel ?? currentCounty);
-
-          if (debouncedLocation.source === "fallback") {
-            setLocationLabel(fallbackLocationLabel);
-          } else if (debouncedLocation.source === "detected" && data.locationLabel) {
-            setLocationLabel(data.locationLabel);
-            setMessage("Using your current location");
-          } else if (debouncedLocation.source === "detected") {
-            setLocationLabel("Detected Location");
-            setMessage("Unable to determine exact city. Showing forecast for your detected location.");
-          }
-        }
-      } catch (error) {
-        if (!ignore && requestIdRef.current === fetchId && !(error instanceof DOMException && error.name === "AbortError")) {
-          setMessage(error instanceof Error ? error.message : "Unable to load forecast.");
-          setForecast(null);
-        }
-      } finally {
-        if (!ignore && requestIdRef.current === fetchId) {
-          setIsLoading(false);
-        }
-      }
-    }
-
-    loadForecast();
-
-    return () => {
-      ignore = true;
-      controller.abort();
-    };
-  }, [debouncedLocation]);
-
-  useEffect(() => {
-    let ignore = false;
-    const controller = new AbortController();
-
     async function loadCurrentConditions() {
       if (!debouncedLocation) {
         return;
@@ -375,6 +391,7 @@ export function HomeWeather({ alerts, forecastOverride, georgeForecastUpdatedAt,
 
       if (cached?.currentConditions) {
         setCurrentConditions(cached.currentConditions);
+        setHourlyForecast(cached.hourly ?? []);
         if (cached.countyLabel) {
           setActiveCounty(cached.countyLabel);
         }
@@ -393,11 +410,21 @@ export function HomeWeather({ alerts, forecastOverride, georgeForecastUpdatedAt,
         if (!ignore && requestIdRef.current === fetchId) {
           writeCachedCurrent(debouncedLocation, data);
           setCurrentConditions(data.currentConditions ?? null);
+          setHourlyForecast(data.hourly ?? []);
           setActiveCounty((currentCounty) => data.countyLabel ?? currentCounty);
 
           if (debouncedLocation.source === "detected") {
             if (data.locationLabel) {
               setLocationLabel(data.locationLabel);
+              saveWeatherLocation(
+                buildWeatherLocation({
+                  displayName: data.locationLabel,
+                  latitude: debouncedLocation.lat,
+                  longitude: debouncedLocation.lon,
+                  source: "detected",
+                  countyLabel: data.countyLabel
+                })
+              );
               setMessage("Using your current location");
             } else {
               setLocationLabel("Detected Location");
@@ -452,18 +479,18 @@ export function HomeWeather({ alerts, forecastOverride, georgeForecastUpdatedAt,
         return;
       }
 
-      localStorage.setItem(
-        savedLocationKey,
-        JSON.stringify({
-          lat: data.lat,
-          lon: data.lon,
-          label,
+      saveWeatherLocation(
+        buildWeatherLocation({
+          displayName: label,
+          latitude: data.lat,
+          longitude: data.lon,
+          source: "searched",
           query,
           countyLabel: data.countyLabel
         })
       );
-      setForecast(null);
       setCurrentConditions(null);
+      setHourlyForecast([]);
       setLocationLabel(label);
       setActiveCounty(data.countyLabel ?? null);
       setMessage(`Showing forecast for ${label}`);
@@ -484,9 +511,33 @@ export function HomeWeather({ alerts, forecastOverride, georgeForecastUpdatedAt,
   return (
     <section className="home-weather">
       <WeatherAlertBanner alerts={locationAlerts} />
-      <section className="current-conditions">
+      <section className="location-control">
+        <form className="location-search" onSubmit={handleLocationSearch}>
+          <label htmlFor="locationSearch">Enter city, state or ZIP code</label>
+          <div className="location-search-row">
+            <input
+              id="locationSearch"
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Elizabethtown, KY"
+              type="text"
+              value={searchQuery}
+            />
+            <button className="button" disabled={isSearching} type="submit">
+              Update Location
+            </button>
+          </div>
+          <button className="location-current-button" onClick={() => requestDeviceLocation(false)} type="button">
+            Use My Current Location
+          </button>
+        </form>
+        <p className="location-note">{message}</p>
+      </section>
+      <section className={`current-conditions ${currentVisualClass}`}>
         <div className="current-primary">
-          <span className="eyebrow">Current Conditions</span>
+          <div className="section-title-row">
+            <span className="eyebrow">Current Conditions</span>
+            <SectionSponsorTag sectionKey="home_current_conditions" />
+          </div>
           <div className="current-temp-row">
             <p className="current-temp">{currentTemperature}</p>
             <CurrentIcon aria-hidden="true" className="current-icon" />
@@ -496,24 +547,15 @@ export function HomeWeather({ alerts, forecastOverride, georgeForecastUpdatedAt,
             <MapPin aria-hidden="true" size={17} />
             {locationLabel}
           </p>
-          <form className="location-search" onSubmit={handleLocationSearch}>
-            <label htmlFor="locationSearch">Enter city, state or ZIP code</label>
-            <div className="location-search-row">
-              <input
-                id="locationSearch"
-                onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="Elizabethtown, KY"
-                type="text"
-                value={searchQuery}
-              />
-              <button className="button" disabled={isSearching} type="submit">
-                Update Location
-              </button>
-            </div>
-            <button className="location-current-button" onClick={() => requestDeviceLocation(false)} type="button">
-              Use My Current Location
-            </button>
-          </form>
+          <p className="current-insight">{currentInsight}</p>
+          <div className="weather-snapshot">
+            <span>Today&apos;s Snapshot</span>
+            <ul>
+              {weatherSnapshot.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
         </div>
         <div className="current-details">
           <div className="current-metric">
@@ -536,6 +578,36 @@ export function HomeWeather({ alerts, forecastOverride, georgeForecastUpdatedAt,
             <span>Wind Gust</span>
             <strong>{windGust}</strong>
           </div>
+          <div className="current-metric">
+            <Thermometer aria-hidden="true" size={22} />
+            <span>Dew Point</span>
+            <strong>{dewpoint}</strong>
+          </div>
+          <div className="current-metric">
+            <Gauge aria-hidden="true" size={22} />
+            <span>Pressure</span>
+            <strong>{pressure}</strong>
+          </div>
+          <div className="current-metric">
+            <Eye aria-hidden="true" size={22} />
+            <span>Visibility</span>
+            <strong>{visibility}</strong>
+          </div>
+          <div className="current-metric">
+            <Sun aria-hidden="true" size={22} />
+            <span>UV</span>
+            <strong>{uv}</strong>
+          </div>
+          <div className="current-metric">
+            <CloudFog aria-hidden="true" size={22} />
+            <span>AQI</span>
+            <strong>{aqi}</strong>
+          </div>
+          <div className="current-metric">
+            <CloudFog aria-hidden="true" size={22} />
+            <span>PM2.5</span>
+            <strong>{pm25}</strong>
+          </div>
           {observed?.observedAt || observed?.updatedAt ? (
             <p className="observation-note">
               {observed.observedAt ? `Observed at: ${observed.observedAt}` : null}
@@ -544,7 +616,6 @@ export function HomeWeather({ alerts, forecastOverride, georgeForecastUpdatedAt,
             </p>
           ) : null}
           <p className="observation-note">Current conditions powered by Open-Meteo.</p>
-          <p className="location-note">{message}</p>
           <button
             className="button refresh-button"
             disabled={!location}
@@ -557,23 +628,18 @@ export function HomeWeather({ alerts, forecastOverride, georgeForecastUpdatedAt,
         </div>
       </section>
 
-      <HomeLivePreview isLive={isLive} videoId={liveVideoId} />
-      <KentuckyFocusTiles />
-      <GeorgesForecastBox forecastOverride={forecastOverride} updatedAt={georgeForecastUpdatedAt} />
-
-      <section className="forecast-section">
-        <div className="forecast-heading">
-          <span className="eyebrow">Seven-Day Forecast</span>
-          <h2>Next up across Kentucky</h2>
+      <IncomingWeatherBar alert={incomingAlert} />
+      <OutdoorConditions current={observed} hourly={hourlyForecast} />
+      <HourlyForecast hours={hourlyForecast} />
+      {isCurrentLoading ? <p className="status-line">Refreshing current observations...</p> : null}
+      <section className="radar-cta panel">
+        <div>
+          <span className="eyebrow">Radar</span>
+          <h2>Track what is moving toward your part of Kentucky.</h2>
         </div>
-        {isLoading ? <p className="status-line">Loading forecast from the National Weather Service...</p> : null}
-        {isCurrentLoading ? <p className="status-line">Refreshing current observations...</p> : null}
-        {!isLoading && sevenDayCards.length === 0 ? <p className="status-line">No forecast periods are available.</p> : null}
-        <div className="forecast-grid">
-          {sevenDayCards.map(({ period, high, low }) => (
-            <ForecastCard high={high} key={period.number} low={low} period={period} />
-          ))}
-        </div>
+        <Link className="button secondary" href="/radar">
+          Open Radar
+        </Link>
       </section>
     </section>
   );

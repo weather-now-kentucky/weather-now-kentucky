@@ -1,4 +1,5 @@
 import { LivePlayer } from "@/components/LivePlayer";
+import { SectionSponsorTag } from "@/components/SectionSponsorTag";
 import { getSiteSettings } from "@/lib/content";
 
 export const dynamic = "force-dynamic";
@@ -15,6 +16,7 @@ export default async function LivePage() {
         <p className="lede">
           Watch live briefings and severe weather coverage when the Weather Now Kentucky desk is on the air.
         </p>
+        <SectionSponsorTag sectionKey="live_stream" />
       </section>
       <LivePlayer isLive={settings.isLive} videoId={videoId} />
     </>

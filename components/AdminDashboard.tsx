@@ -2,23 +2,29 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User } from "firebase/auth";
+import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { Edit3, LogIn, LogOut, Plus, Save, Trash2 } from "lucide-react";
-import { getFirebaseServices, isFirebaseConfigured } from "@/lib/firebase";
+import { getFirebaseServices, getFirebaseStorage, isFirebaseConfigured } from "@/lib/firebase";
 import {
   deleteTeamMember,
   getBlogPosts,
   getSiteSettings,
+  getSponsorPlacements,
   getSponsors,
   getTeamMembers,
   saveBlogPost,
   saveSiteSettings,
   saveSponsor,
+  saveSponsorPlacement,
   saveTeamMember,
+  updateSponsor,
+  updateSponsorPlacement,
   updateTeamMember,
   updateBlogPost,
   type BlogPost,
   type SiteSettings,
   type Sponsor,
+  type SponsorPlacement,
   type TeamMember
 } from "@/lib/content";
 
@@ -29,20 +35,57 @@ const emptyPost = {
   body: ""
 };
 
-const emptySponsor = {
+type SponsorFormState = Omit<Sponsor, "id" | "description" | "url" | "createdAtLabel" | "updatedAtLabel">;
+
+const emptySponsor: SponsorFormState = {
   name: "",
-  description: "",
-  url: "",
-  logoUrl: ""
+  businessCategory: "",
+  websiteUrl: "",
+  logoUrl: "",
+  logoStoragePath: "",
+  status: "active" as const,
+  priority: 0,
+  startDate: "",
+  endDate: "",
+  notes: ""
 };
 
-const emptyTeamMember = {
+const sectionOptions = [
+  { sectionKey: "home_current_conditions", sectionLabel: "Home - Current Conditions", page: "home" },
+  { sectionKey: "home_incoming_weather_bar", sectionLabel: "Home - Incoming Weather Bar", page: "home" },
+  { sectionKey: "home_outdoor_conditions", sectionLabel: "Home - Outdoor Conditions", page: "home" },
+  { sectionKey: "home_hourly_conditions", sectionLabel: "Home - Hour-by-Hour Conditions", page: "home" },
+  { sectionKey: "outlook_seven_day", sectionLabel: "Outlook - Seven-Day Forecast", page: "outlook" },
+  { sectionKey: "outlook_regional_breakdown", sectionLabel: "Outlook - Regional Breakdown", page: "outlook" },
+  { sectionKey: "radar_main", sectionLabel: "Radar - Main", page: "radar" },
+  { sectionKey: "alerts_main", sectionLabel: "Alerts - Main", page: "alerts" },
+  { sectionKey: "live_stream", sectionLabel: "Live - Stream", page: "live" },
+  { sectionKey: "blog_sidebar", sectionLabel: "Blog - Sidebar/Footer", page: "blog" }
+] as const;
+
+const emptyPlacement = {
+  sectionKey: "home_current_conditions",
+  sectionLabel: "Home - Current Conditions",
+  page: "home" as SponsorPlacement["page"],
+  sponsorId: "",
+  enabled: true,
+  displayLabel: "Sponsored by",
+  placementType: "section-header" as SponsorPlacement["placementType"],
+  rotationGroup: "",
+  priority: 0
+};
+
+type TeamMemberFormState = Omit<TeamMember, "id" | "createdAtLabel" | "updatedAtLabel">;
+
+const emptyTeamMember: TeamMemberFormState = {
   name: "",
   role: "",
   bio: "",
-  imageUrl: "",
-  linkUrl: "",
-  order: 0
+  photoUrl: "",
+  photoStoragePath: "",
+  socialUrl: "",
+  order: 0,
+  status: "active" as const
 };
 
 export function AdminDashboard() {
@@ -57,9 +100,17 @@ export function AdminDashboard() {
   const [postForm, setPostForm] = useState(emptyPost);
   const [sponsors, setSponsors] = useState<Sponsor[]>([]);
   const [sponsorForm, setSponsorForm] = useState(emptySponsor);
+  const [selectedSponsorId, setSelectedSponsorId] = useState("");
+  const [sponsorLogoFile, setSponsorLogoFile] = useState<File | null>(null);
+  const [showSponsorLogoUrl, setShowSponsorLogoUrl] = useState(false);
+  const [sponsorPlacements, setSponsorPlacements] = useState<SponsorPlacement[]>([]);
+  const [placementForm, setPlacementForm] = useState(emptyPlacement);
+  const [selectedPlacementId, setSelectedPlacementId] = useState("");
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [selectedTeamMemberId, setSelectedTeamMemberId] = useState("");
   const [teamMemberForm, setTeamMemberForm] = useState(emptyTeamMember);
+  const [teamHeadshotFile, setTeamHeadshotFile] = useState<File | null>(null);
+  const [teamHeadshotPreview, setTeamHeadshotPreview] = useState("");
 
   useEffect(() => {
     if (!configured) {
@@ -76,16 +127,18 @@ export function AdminDashboard() {
     }
 
     async function loadAdminData() {
-      const [loadedSettings, loadedPosts, loadedSponsors, loadedTeamMembers] = await Promise.all([
+      const [loadedSettings, loadedPosts, loadedSponsors, loadedPlacements, loadedTeamMembers] = await Promise.all([
         getSiteSettings(),
         getBlogPosts(false),
         getSponsors(false),
-        getTeamMembers(false)
+        getSponsorPlacements(false),
+        getTeamMembers(false, false)
       ]);
 
       setSettings(loadedSettings);
       setPosts(loadedPosts);
       setSponsors(loadedSponsors);
+      setSponsorPlacements(loadedPlacements);
       setTeamMembers(loadedTeamMembers);
     }
 
@@ -142,12 +195,65 @@ export function AdminDashboard() {
     setMessage("");
 
     try {
-      await saveSponsor(sponsorForm);
-      setMessage("Sponsor added.");
+      if (sponsorLogoFile && sponsorLogoFile.size > 2_000_000) {
+        throw new Error("Logo file must be 2 MB or smaller.");
+      }
+
+      let logoUrl = sponsorForm.logoUrl;
+      let logoStoragePath = sponsorForm.logoStoragePath;
+      let sponsorId = selectedSponsorId;
+
+      if (!sponsorId) {
+        sponsorId = await saveSponsor(sponsorForm);
+      }
+
+      if (sponsorLogoFile) {
+        const extension = sponsorLogoFile.name.split(".").pop()?.toLowerCase() || "png";
+        logoStoragePath = `sponsors/${sponsorId}/logo.${extension}`;
+        const logoRef = ref(getFirebaseStorage(), logoStoragePath);
+        await uploadBytes(logoRef, sponsorLogoFile, { contentType: sponsorLogoFile.type });
+        logoUrl = await getDownloadURL(logoRef);
+      }
+
+      await updateSponsor(sponsorId, {
+        ...sponsorForm,
+        logoUrl,
+        logoStoragePath
+      });
+
+      setMessage(selectedSponsorId ? "Sponsor updated." : "Sponsor added.");
       setSponsorForm(emptySponsor);
+      setSelectedSponsorId("");
+      setSponsorLogoFile(null);
+      setShowSponsorLogoUrl(false);
       setSponsors(await getSponsors(false));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to save sponsor.");
+    }
+  }
+
+  async function handlePlacement(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage("");
+
+    try {
+      if (!placementForm.sponsorId) {
+        throw new Error("Choose a sponsor for this placement.");
+      }
+
+      if (selectedPlacementId) {
+        await updateSponsorPlacement(selectedPlacementId, placementForm);
+        setMessage("Sponsor placement updated.");
+      } else {
+        await saveSponsorPlacement(placementForm);
+        setMessage("Sponsor placement added.");
+      }
+
+      setPlacementForm(emptyPlacement);
+      setSelectedPlacementId("");
+      setSponsorPlacements(await getSponsorPlacements(false));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to save sponsor placement.");
     }
   }
 
@@ -156,17 +262,38 @@ export function AdminDashboard() {
     setMessage("");
 
     try {
-      if (selectedTeamMemberId) {
-        await updateTeamMember(selectedTeamMemberId, teamMemberForm);
-        setMessage("Team member updated.");
-      } else {
-        await saveTeamMember(teamMemberForm);
-        setMessage("Team member added.");
+      if (teamHeadshotFile && teamHeadshotFile.size > 2_000_000) {
+        throw new Error("Headshot file must be 2 MB or smaller.");
       }
 
+      let photoUrl = teamMemberForm.photoUrl;
+      let photoStoragePath = teamMemberForm.photoStoragePath;
+      let teamMemberId = selectedTeamMemberId;
+
+      if (!teamMemberId) {
+        teamMemberId = await saveTeamMember(teamMemberForm);
+      }
+
+      if (teamHeadshotFile) {
+        const extension = teamHeadshotFile.name.split(".").pop()?.toLowerCase() || "jpg";
+        photoStoragePath = `teamMembers/${teamMemberId}/headshot.${extension}`;
+        const headshotRef = ref(getFirebaseStorage(), photoStoragePath);
+        await uploadBytes(headshotRef, teamHeadshotFile, { contentType: teamHeadshotFile.type });
+        photoUrl = await getDownloadURL(headshotRef);
+      }
+
+      await updateTeamMember(teamMemberId, {
+        ...teamMemberForm,
+        photoUrl,
+        photoStoragePath
+      });
+
+      setMessage(selectedTeamMemberId ? "Team member updated." : "Team member added.");
       setTeamMemberForm(emptyTeamMember);
       setSelectedTeamMemberId("");
-      setTeamMembers(await getTeamMembers(false));
+      setTeamHeadshotFile(null);
+      setTeamHeadshotPreview("");
+      setTeamMembers(await getTeamMembers(false, false));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to save team member.");
     }
@@ -188,9 +315,77 @@ export function AdminDashboard() {
       name: member.name,
       role: member.role,
       bio: member.bio,
-      imageUrl: member.imageUrl,
-      linkUrl: member.linkUrl,
-      order: member.order
+      photoUrl: member.photoUrl,
+      photoStoragePath: member.photoStoragePath,
+      socialUrl: member.socialUrl,
+      order: member.order,
+      status: member.status
+    });
+    setTeamHeadshotFile(null);
+    setTeamHeadshotPreview("");
+  }
+
+  function editSponsor(sponsor: Sponsor) {
+    setSelectedSponsorId(sponsor.id);
+    setSponsorForm({
+      name: sponsor.name,
+      businessCategory: sponsor.businessCategory,
+      websiteUrl: sponsor.websiteUrl,
+      logoUrl: sponsor.logoUrl,
+      logoStoragePath: sponsor.logoStoragePath,
+      status: sponsor.status,
+      priority: sponsor.priority,
+      startDate: sponsor.startDate ?? "",
+      endDate: sponsor.endDate ?? "",
+      notes: sponsor.notes ?? ""
+    });
+    setSponsorLogoFile(null);
+    setShowSponsorLogoUrl(false);
+  }
+
+  async function deactivateSponsor(sponsor: Sponsor) {
+    try {
+      await updateSponsor(sponsor.id, {
+        name: sponsor.name,
+        businessCategory: sponsor.businessCategory,
+        websiteUrl: sponsor.websiteUrl,
+        logoUrl: sponsor.logoUrl,
+        logoStoragePath: sponsor.logoStoragePath,
+        status: "inactive",
+        priority: sponsor.priority,
+        startDate: sponsor.startDate ?? "",
+        endDate: sponsor.endDate ?? "",
+        notes: sponsor.notes ?? ""
+      });
+      setMessage("Sponsor deactivated.");
+      setSponsors(await getSponsors(false));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to deactivate sponsor.");
+    }
+  }
+
+  function editPlacement(placement: SponsorPlacement) {
+    setSelectedPlacementId(placement.id);
+    setPlacementForm({
+      sectionKey: placement.sectionKey,
+      sectionLabel: placement.sectionLabel,
+      page: placement.page,
+      sponsorId: placement.sponsorId,
+      enabled: placement.enabled,
+      displayLabel: placement.displayLabel,
+      placementType: placement.placementType,
+      rotationGroup: placement.rotationGroup ?? "",
+      priority: placement.priority
+    });
+  }
+
+  function applySectionOption(sectionKey: string) {
+    const option = sectionOptions.find((item) => item.sectionKey === sectionKey) ?? sectionOptions[0];
+    setPlacementForm({
+      ...placementForm,
+      sectionKey: option.sectionKey,
+      sectionLabel: option.sectionLabel,
+      page: option.page
     });
   }
 
@@ -210,7 +405,7 @@ export function AdminDashboard() {
         setTeamMemberForm(emptyTeamMember);
       }
 
-      setTeamMembers(await getTeamMembers(false));
+      setTeamMembers(await getTeamMembers(false, false));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to remove team member.");
     }
@@ -364,7 +559,7 @@ export function AdminDashboard() {
 
       <div className="grid two">
         <form className="panel admin-form" onSubmit={handleSponsor}>
-          <h2>Add sponsor</h2>
+          <h2>{selectedSponsorId ? "Edit sponsor" : "Add sponsor"}</h2>
           <div className="field">
             <label htmlFor="sponsorName">Name</label>
             <input
@@ -376,48 +571,259 @@ export function AdminDashboard() {
             />
           </div>
           <div className="field">
-            <label htmlFor="sponsorDescription">Description</label>
+            <label htmlFor="sponsorCategory">Business category</label>
             <input
               className="input"
-              id="sponsorDescription"
-              onChange={(event) => setSponsorForm({ ...sponsorForm, description: event.target.value })}
-              value={sponsorForm.description}
+              id="sponsorCategory"
+              onChange={(event) => setSponsorForm({ ...sponsorForm, businessCategory: event.target.value })}
+              value={sponsorForm.businessCategory}
             />
           </div>
           <div className="field">
-            <label htmlFor="sponsorUrl">External URL</label>
+            <label htmlFor="sponsorUrl">Website URL</label>
             <input
               className="input"
               id="sponsorUrl"
-              onChange={(event) => setSponsorForm({ ...sponsorForm, url: event.target.value })}
+              onChange={(event) => setSponsorForm({ ...sponsorForm, websiteUrl: event.target.value })}
               required
               type="url"
-              value={sponsorForm.url}
+              value={sponsorForm.websiteUrl}
             />
           </div>
           <div className="field">
-            <label htmlFor="sponsorLogo">Logo URL</label>
+            <label htmlFor="sponsorLogo">Logo upload</label>
             <input
               className="input"
               id="sponsorLogo"
-              onChange={(event) => setSponsorForm({ ...sponsorForm, logoUrl: event.target.value })}
-              type="url"
-              value={sponsorForm.logoUrl}
+              accept="image/png,image/jpeg,image/webp,image/svg+xml"
+              onChange={(event) => setSponsorLogoFile(event.target.files?.[0] ?? null)}
+              type="file"
+            />
+            <p className="field-help">PNG, JPG, WEBP, or SVG. Transparent PNG or SVG recommended. Max 2 MB.</p>
+          </div>
+          {sponsorForm.logoUrl ? (
+            <div className="sponsor-logo-preview">
+              <img alt={`${sponsorForm.name || "Sponsor"} logo preview`} src={sponsorForm.logoUrl} />
+            </div>
+          ) : null}
+          <button className="location-current-button" onClick={() => setShowSponsorLogoUrl((value) => !value)} type="button">
+            Advanced / use external logo URL
+          </button>
+          {showSponsorLogoUrl ? (
+            <div className="field">
+              <label htmlFor="sponsorLogoUrl">Logo URL</label>
+              <input
+                className="input"
+                id="sponsorLogoUrl"
+                onChange={(event) => setSponsorForm({ ...sponsorForm, logoUrl: event.target.value })}
+                type="url"
+                value={sponsorForm.logoUrl}
+              />
+            </div>
+          ) : null}
+          <label className="toggle-row">
+            <input
+              checked={sponsorForm.status === "active"}
+              onChange={(event) => setSponsorForm({ ...sponsorForm, status: event.target.checked ? "active" : "inactive" })}
+              type="checkbox"
+            />
+            Active sponsor
+          </label>
+          <div className="field">
+            <label htmlFor="sponsorPriority">Priority</label>
+            <input
+              className="input"
+              id="sponsorPriority"
+              onChange={(event) => setSponsorForm({ ...sponsorForm, priority: Number(event.target.value) })}
+              type="number"
+              value={sponsorForm.priority}
             />
           </div>
-          <button className="button" type="submit">
-            <Plus aria-hidden="true" size={16} />
-            Add sponsor
-          </button>
+          <div className="grid two">
+            <div className="field">
+              <label htmlFor="sponsorStart">Start date</label>
+              <input
+                className="input"
+                id="sponsorStart"
+                onChange={(event) => setSponsorForm({ ...sponsorForm, startDate: event.target.value })}
+                type="date"
+                value={sponsorForm.startDate}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="sponsorEnd">End date</label>
+              <input
+                className="input"
+                id="sponsorEnd"
+                onChange={(event) => setSponsorForm({ ...sponsorForm, endDate: event.target.value })}
+                type="date"
+                value={sponsorForm.endDate}
+              />
+            </div>
+          </div>
+          <div className="field">
+            <label htmlFor="sponsorNotes">Notes</label>
+            <textarea
+              className="textarea"
+              id="sponsorNotes"
+              onChange={(event) => setSponsorForm({ ...sponsorForm, notes: event.target.value })}
+              value={sponsorForm.notes}
+            />
+          </div>
+          <div className="admin-actions">
+            <button className="button" type="submit">
+              {selectedSponsorId ? <Save aria-hidden="true" size={16} /> : <Plus aria-hidden="true" size={16} />}
+              {selectedSponsorId ? "Update sponsor" : "Add sponsor"}
+            </button>
+            {selectedSponsorId ? (
+              <button
+                className="button ghost"
+                onClick={() => {
+                  setSelectedSponsorId("");
+                  setSponsorForm(emptySponsor);
+                  setSponsorLogoFile(null);
+                  setShowSponsorLogoUrl(false);
+                }}
+                type="button"
+              >
+                Cancel
+              </button>
+            ) : null}
+          </div>
         </form>
 
         <div className="panel admin-list">
-          <h2>Current sponsors</h2>
+          <h2>Sponsor list</h2>
           {sponsors.map((sponsor) => (
-            <span className="list-row" key={sponsor.id}>
-              {sponsor.name}
-            </span>
+            <div className="list-row admin-list-row" key={sponsor.id}>
+              <button className="list-row-main" onClick={() => editSponsor(sponsor)} type="button">
+                {sponsor.logoUrl ? <img alt="" className="admin-sponsor-thumb" src={sponsor.logoUrl} /> : null}
+                <span>
+                  <strong>{sponsor.name}</strong>
+                  <small>
+                    {sponsor.status} | {sponsor.websiteUrl} |{" "}
+                    {sponsorPlacements.filter((placement) => placement.sponsorId === sponsor.id).length} placements
+                  </small>
+                </span>
+              </button>
+              <button className="icon-danger" onClick={() => deactivateSponsor(sponsor)} type="button" aria-label={`Deactivate ${sponsor.name}`}>
+                <Trash2 aria-hidden="true" size={16} />
+              </button>
+            </div>
           ))}
+        </div>
+      </div>
+
+      <div className="grid two">
+        <form className="panel admin-form" onSubmit={handlePlacement}>
+          <h2>{selectedPlacementId ? "Edit sponsor placement" : "Add sponsor placement"}</h2>
+          <div className="field">
+            <label htmlFor="placementSection">Section</label>
+            <select className="input" id="placementSection" onChange={(event) => applySectionOption(event.target.value)} value={placementForm.sectionKey}>
+              {sectionOptions.map((option) => (
+                <option key={option.sectionKey} value={option.sectionKey}>
+                  {option.sectionLabel}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="placementSponsor">Sponsor</label>
+            <select
+              className="input"
+              id="placementSponsor"
+              onChange={(event) => setPlacementForm({ ...placementForm, sponsorId: event.target.value })}
+              value={placementForm.sponsorId}
+            >
+              <option value="">Choose sponsor</option>
+              {sponsors.map((sponsor) => (
+                <option key={sponsor.id} value={sponsor.id}>
+                  {sponsor.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <label className="toggle-row">
+            <input
+              checked={placementForm.enabled}
+              onChange={(event) => setPlacementForm({ ...placementForm, enabled: event.target.checked })}
+              type="checkbox"
+            />
+            Enabled
+          </label>
+          <div className="field">
+            <label htmlFor="placementType">Placement type</label>
+            <select
+              className="input"
+              id="placementType"
+              onChange={(event) => setPlacementForm({ ...placementForm, placementType: event.target.value as SponsorPlacement["placementType"] })}
+              value={placementForm.placementType}
+            >
+              <option value="section-header">section-header</option>
+              <option value="card-footer">card-footer</option>
+              <option value="alert-bar">alert-bar</option>
+              <option value="radar-control">radar-control</option>
+              <option value="live-banner">live-banner</option>
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="placementLabel">Display label</label>
+            <input
+              className="input"
+              id="placementLabel"
+              onChange={(event) => setPlacementForm({ ...placementForm, displayLabel: event.target.value })}
+              value={placementForm.displayLabel}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="placementRotation">Rotation group</label>
+            <input
+              className="input"
+              id="placementRotation"
+              onChange={(event) => setPlacementForm({ ...placementForm, rotationGroup: event.target.value })}
+              value={placementForm.rotationGroup}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="placementPriority">Priority</label>
+            <input
+              className="input"
+              id="placementPriority"
+              onChange={(event) => setPlacementForm({ ...placementForm, priority: Number(event.target.value) })}
+              type="number"
+              value={placementForm.priority}
+            />
+          </div>
+          <div className="admin-actions">
+            <button className="button" type="submit">
+              {selectedPlacementId ? <Save aria-hidden="true" size={16} /> : <Plus aria-hidden="true" size={16} />}
+              {selectedPlacementId ? "Update placement" : "Add placement"}
+            </button>
+            {selectedPlacementId ? (
+              <button
+                className="button ghost"
+                onClick={() => {
+                  setSelectedPlacementId("");
+                  setPlacementForm(emptyPlacement);
+                }}
+                type="button"
+              >
+                Cancel
+              </button>
+            ) : null}
+          </div>
+        </form>
+
+        <div className="panel admin-list">
+          <h2>Sponsor placements</h2>
+          {sponsorPlacements.map((placement) => (
+            <button className="list-button" key={placement.id} onClick={() => editPlacement(placement)} type="button">
+              <Edit3 aria-hidden="true" size={16} />
+              {placement.sectionLabel} - {sponsors.find((sponsor) => sponsor.id === placement.sponsorId)?.name ?? "Sponsor"} (
+              {placement.enabled ? "enabled" : "disabled"})
+            </button>
+          ))}
+          {sponsorPlacements.length === 0 ? <p className="status-line">No sponsor placements assigned yet.</p> : null}
         </div>
       </div>
 
@@ -455,25 +861,43 @@ export function AdminDashboard() {
             />
           </div>
           <div className="field">
-            <label htmlFor="teamImage">Headshot photo URL</label>
+            <label htmlFor="teamImage">Headshot image upload</label>
             <input
               className="input"
               id="teamImage"
-              onChange={(event) => setTeamMemberForm({ ...teamMemberForm, imageUrl: event.target.value })}
-              type="url"
-              value={teamMemberForm.imageUrl}
+              accept="image/png,image/jpeg,image/jpg,image/webp"
+              onChange={(event) => {
+                const file = event.target.files?.[0] ?? null;
+                setTeamHeadshotFile(file);
+                setTeamHeadshotPreview(file ? URL.createObjectURL(file) : "");
+              }}
+              type="file"
             />
+            <p className="field-help">PNG, JPG, JPEG, or WEBP. Max 2 MB.</p>
           </div>
+          {teamHeadshotPreview || teamMemberForm.photoUrl ? (
+            <div className="sponsor-logo-preview">
+              <img alt={`${teamMemberForm.name || "Team member"} headshot preview`} src={teamHeadshotPreview || teamMemberForm.photoUrl} />
+            </div>
+          ) : null}
           <div className="field">
             <label htmlFor="teamLink">Optional social/link URL</label>
             <input
               className="input"
               id="teamLink"
-              onChange={(event) => setTeamMemberForm({ ...teamMemberForm, linkUrl: event.target.value })}
+              onChange={(event) => setTeamMemberForm({ ...teamMemberForm, socialUrl: event.target.value })}
               type="url"
-              value={teamMemberForm.linkUrl}
+              value={teamMemberForm.socialUrl}
             />
           </div>
+          <label className="toggle-row">
+            <input
+              checked={teamMemberForm.status === "active"}
+              onChange={(event) => setTeamMemberForm({ ...teamMemberForm, status: event.target.checked ? "active" : "inactive" })}
+              type="checkbox"
+            />
+            Active team member
+          </label>
           <div className="field">
             <label htmlFor="teamOrder">Sort/order number</label>
             <input
@@ -495,6 +919,8 @@ export function AdminDashboard() {
                 onClick={() => {
                   setSelectedTeamMemberId("");
                   setTeamMemberForm(emptyTeamMember);
+                  setTeamHeadshotFile(null);
+                  setTeamHeadshotPreview("");
                 }}
                 type="button"
               >
@@ -517,7 +943,7 @@ export function AdminDashboard() {
               </button>
             </div>
           ))}
-          {teamMembers.length === 0 ? <p className="status-line">No Firestore team members yet. The public page shows placeholders.</p> : null}
+          {teamMembers.length === 0 ? <p className="status-line">No team members have been added yet.</p> : null}
         </div>
       </div>
     </section>

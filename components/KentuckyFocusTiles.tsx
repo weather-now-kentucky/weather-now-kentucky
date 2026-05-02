@@ -1,11 +1,16 @@
+import { SectionSponsorTag } from "@/components/SectionSponsorTag";
+
 const regions = ["Western KY", "Central KY", "Eastern KY"];
 
-export function KentuckyFocusTiles() {
+export function KentuckyFocusTiles({ sponsorKey }: { sponsorKey?: string }) {
   return (
     <section className="kentucky-focus">
       <div className="forecast-heading">
-        <span className="eyebrow">Kentucky Weather Focus</span>
-        <h2>Regional outlook</h2>
+        <div>
+          <span className="eyebrow">Kentucky Weather Focus</span>
+          <h2>Regional outlook</h2>
+        </div>
+        {sponsorKey ? <SectionSponsorTag sectionKey={sponsorKey} /> : null}
       </div>
       <div className="kentucky-focus-grid">
         {regions.map((region) => (

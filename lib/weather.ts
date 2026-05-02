@@ -108,17 +108,68 @@ const latestObservationSchema = z.object({
   })
 });
 
-const openMeteoCurrentSchema = z.object({
+const nullableNumberArray = z.array(z.number().nullable()).optional();
+
+const openMeteoForecastSchema = z.object({
   current: z.object({
     time: z.string().optional(),
     temperature_2m: z.number().nullable().optional(),
     relative_humidity_2m: z.number().nullable().optional(),
     apparent_temperature: z.number().nullable().optional(),
+    dew_point_2m: z.number().nullable().optional(),
     weather_code: z.number().nullable().optional(),
     wind_speed_10m: z.number().nullable().optional(),
     wind_direction_10m: z.number().nullable().optional(),
-    wind_gusts_10m: z.number().nullable().optional()
-  })
+    wind_gusts_10m: z.number().nullable().optional(),
+    surface_pressure: z.number().nullable().optional(),
+    pressure_msl: z.number().nullable().optional(),
+    visibility: z.number().nullable().optional(),
+    uv_index: z.number().nullable().optional()
+  }),
+  hourly: z
+    .object({
+      time: z.array(z.string()).optional(),
+      temperature_2m: nullableNumberArray,
+      apparent_temperature: nullableNumberArray,
+      relative_humidity_2m: nullableNumberArray,
+      dew_point_2m: nullableNumberArray,
+      precipitation_probability: nullableNumberArray,
+      weather_code: nullableNumberArray,
+      wind_speed_10m: nullableNumberArray,
+      wind_direction_10m: nullableNumberArray,
+      wind_gusts_10m: nullableNumberArray,
+      uv_index: nullableNumberArray,
+      surface_pressure: nullableNumberArray,
+      visibility: nullableNumberArray
+    })
+    .optional()
+});
+
+const openMeteoAirQualitySchema = z.object({
+  current: z
+    .object({
+      time: z.string().optional(),
+      us_aqi: z.number().nullable().optional(),
+      pm2_5: z.number().nullable().optional(),
+      pm10: z.number().nullable().optional(),
+      carbon_monoxide: z.number().nullable().optional(),
+      nitrogen_dioxide: z.number().nullable().optional(),
+      sulphur_dioxide: z.number().nullable().optional(),
+      ozone: z.number().nullable().optional(),
+      dust: z.number().nullable().optional(),
+      uv_index: z.number().nullable().optional(),
+      uv_index_clear_sky: z.number().nullable().optional()
+    })
+    .optional(),
+  hourly: z
+    .object({
+      time: z.array(z.string()).optional(),
+      us_aqi: nullableNumberArray,
+      pm2_5: nullableNumberArray,
+      pm10: nullableNumberArray,
+      uv_index: nullableNumberArray
+    })
+    .optional()
 });
 
 const alertSchema = z.object({
@@ -157,10 +208,40 @@ export type CurrentConditions = {
   windSpeed?: number;
   windDirection?: string;
   windGust?: number;
+  pressureInHg?: number;
+  visibilityMiles?: number;
+  uvIndex?: number;
+  uvLabel?: string;
+  aqi?: number;
+  aqiLabel?: string;
+  pm25?: number;
+  pm10?: number;
+  dust?: number;
   textDescription?: string;
+  weatherCode?: number;
   observedAt?: string;
   updatedAt?: string;
   source?: string;
+};
+
+export type HourlyForecastHour = {
+  time: string;
+  temperature?: number;
+  feelsLike?: number;
+  humidity?: number;
+  dewpoint?: number;
+  precipChance?: number;
+  weatherCode?: number;
+  textDescription?: string;
+  windSpeed?: number;
+  windDirection?: string;
+  windGust?: number;
+  uvIndex?: number;
+  pressureInHg?: number;
+  visibilityMiles?: number;
+  aqi?: number;
+  pm25?: number;
+  pm10?: number;
 };
 
 export type PointForecast = {
@@ -172,6 +253,7 @@ export type PointForecast = {
 
 export type CurrentConditionsResponse = {
   currentConditions?: CurrentConditions;
+  hourly?: HourlyForecastHour[];
   locationLabel?: string;
   countyLabel?: string;
 };
@@ -236,6 +318,75 @@ function degreesToCompass(value?: number | null) {
   return directions[Math.round(value / 22.5) % 16];
 }
 
+function roundValue(value?: number | null, digits = 0) {
+  if (typeof value !== "number") {
+    return undefined;
+  }
+
+  const multiplier = Math.pow(10, digits);
+  return Math.round(value * multiplier) / multiplier;
+}
+
+function hPaToInHg(value?: number | null) {
+  return roundValue(typeof value === "number" ? value * 0.0295299830714 : undefined, 2);
+}
+
+function metersToMiles(value?: number | null) {
+  return roundValue(typeof value === "number" ? value * 0.000621371 : undefined, 1);
+}
+
+function uvLabel(value?: number | null) {
+  if (typeof value !== "number") {
+    return undefined;
+  }
+
+  if (value >= 11) {
+    return "Extreme";
+  }
+
+  if (value >= 8) {
+    return "Very High";
+  }
+
+  if (value >= 6) {
+    return "High";
+  }
+
+  if (value >= 3) {
+    return "Moderate";
+  }
+
+  return "Low";
+}
+
+function aqiLabel(value?: number | null) {
+  if (typeof value !== "number") {
+    return undefined;
+  }
+
+  if (value <= 50) {
+    return "Good";
+  }
+
+  if (value <= 100) {
+    return "Moderate";
+  }
+
+  if (value <= 150) {
+    return "Unhealthy for Sensitive Groups";
+  }
+
+  if (value <= 200) {
+    return "Unhealthy";
+  }
+
+  if (value <= 300) {
+    return "Very Unhealthy";
+  }
+
+  return "Hazardous";
+}
+
 function formatObservationTime(value?: string | null) {
   if (!value) {
     return undefined;
@@ -245,6 +396,11 @@ function formatObservationTime(value?: string | null) {
     hour: "numeric",
     minute: "2-digit"
   });
+}
+
+function getHourlyNumber(values: (number | null)[] | undefined, index: number) {
+  const value = values?.[index];
+  return typeof value === "number" ? value : undefined;
 }
 
 function calculateHeatIndex(temperature?: number, humidity?: number) {
@@ -317,43 +473,127 @@ function openMeteoCodeToText(code?: number | null) {
   return labels[code] ?? "Current Conditions";
 }
 
-async function getOpenMeteoCurrentConditions(lat: number, lon: number): Promise<CurrentConditions | undefined> {
-  const url = new URL("https://api.open-meteo.com/v1/forecast");
-  url.searchParams.set("latitude", String(lat));
-  url.searchParams.set("longitude", String(lon));
-  url.searchParams.set(
+async function getOpenMeteoWeatherBundle(
+  lat: number,
+  lon: number
+): Promise<{ currentConditions?: CurrentConditions; hourly: HourlyForecastHour[] }> {
+  const forecastUrl = new URL("https://api.open-meteo.com/v1/forecast");
+  forecastUrl.searchParams.set("latitude", String(lat));
+  forecastUrl.searchParams.set("longitude", String(lon));
+  forecastUrl.searchParams.set(
     "current",
-    "temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m"
+    "temperature_2m,relative_humidity_2m,apparent_temperature,dew_point_2m,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m,surface_pressure,pressure_msl,visibility,uv_index"
   );
-  url.searchParams.set("temperature_unit", "fahrenheit");
-  url.searchParams.set("wind_speed_unit", "mph");
-  url.searchParams.set("timezone", "auto");
+  forecastUrl.searchParams.set(
+    "hourly",
+    "temperature_2m,apparent_temperature,relative_humidity_2m,dew_point_2m,precipitation_probability,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m,uv_index,surface_pressure,visibility"
+  );
+  forecastUrl.searchParams.set("temperature_unit", "fahrenheit");
+  forecastUrl.searchParams.set("wind_speed_unit", "mph");
+  forecastUrl.searchParams.set("precipitation_unit", "inch");
+  forecastUrl.searchParams.set("timezone", "auto");
 
-  const response = await fetch(url, {
-    headers: {
-      Accept: "application/json"
-    },
-    next: { revalidate: 120 }
-  });
+  const airQualityUrl = new URL("https://air-quality-api.open-meteo.com/v1/air-quality");
+  airQualityUrl.searchParams.set("latitude", String(lat));
+  airQualityUrl.searchParams.set("longitude", String(lon));
+  airQualityUrl.searchParams.set(
+    "current",
+    "us_aqi,pm2_5,pm10,carbon_monoxide,nitrogen_dioxide,sulphur_dioxide,ozone,dust,uv_index,uv_index_clear_sky"
+  );
+  airQualityUrl.searchParams.set("hourly", "us_aqi,pm2_5,pm10,uv_index");
+  airQualityUrl.searchParams.set("timezone", "auto");
 
-  if (!response.ok) {
-    throw new Error(`Open-Meteo request failed: ${response.status} ${response.statusText}`);
+  const [forecastResponse, airQualityResponse] = await Promise.all([
+    fetch(forecastUrl, {
+      headers: {
+        Accept: "application/json"
+      },
+      next: { revalidate: 120 }
+    }),
+    fetch(airQualityUrl, {
+      headers: {
+        Accept: "application/json"
+      },
+      next: { revalidate: 300 }
+    })
+  ]);
+
+  if (!forecastResponse.ok) {
+    throw new Error(`Open-Meteo forecast request failed: ${forecastResponse.status} ${forecastResponse.statusText}`);
   }
 
-  const data = openMeteoCurrentSchema.parse(await response.json());
-  const current = data.current;
+  const forecastData = openMeteoForecastSchema.parse(await forecastResponse.json());
+  const airQualityData = airQualityResponse.ok ? openMeteoAirQualitySchema.parse(await airQualityResponse.json()) : undefined;
+  const current = forecastData.current;
+  const airQuality = airQualityData?.current;
+  const pressure = hPaToInHg(current.pressure_msl ?? current.surface_pressure);
+  const uv = roundValue(airQuality?.uv_index ?? current.uv_index, 1);
+  const aqi = roundValue(airQuality?.us_aqi);
 
-  return {
-    temperature: typeof current.temperature_2m === "number" ? Math.round(current.temperature_2m) : undefined,
-    feelsLike: typeof current.apparent_temperature === "number" ? Math.round(current.apparent_temperature) : undefined,
-    humidity: typeof current.relative_humidity_2m === "number" ? Math.round(current.relative_humidity_2m) : undefined,
-    windSpeed: typeof current.wind_speed_10m === "number" ? Math.round(current.wind_speed_10m) : undefined,
+  const currentConditions: CurrentConditions = {
+    temperature: roundValue(current.temperature_2m),
+    feelsLike: roundValue(current.apparent_temperature),
+    humidity: roundValue(current.relative_humidity_2m),
+    dewpoint: roundValue(current.dew_point_2m),
+    windSpeed: roundValue(current.wind_speed_10m),
     windDirection: degreesToCompass(current.wind_direction_10m),
-    windGust: typeof current.wind_gusts_10m === "number" ? Math.round(current.wind_gusts_10m) : undefined,
+    windGust: roundValue(current.wind_gusts_10m),
+    pressureInHg: pressure,
+    visibilityMiles: metersToMiles(current.visibility),
+    uvIndex: uv,
+    uvLabel: uvLabel(uv),
+    aqi,
+    aqiLabel: aqiLabel(aqi),
+    pm25: roundValue(airQuality?.pm2_5, 1),
+    pm10: roundValue(airQuality?.pm10, 1),
+    dust: roundValue(airQuality?.dust, 1),
     textDescription: openMeteoCodeToText(current.weather_code),
+    weatherCode: typeof current.weather_code === "number" ? current.weather_code : undefined,
     observedAt: "Open-Meteo",
     updatedAt: formatObservationTime(current.time),
     source: "Open-Meteo"
+  };
+
+  const now = Date.now();
+  const forecastHourly = forecastData.hourly;
+  const airQualityHourly = airQualityData?.hourly;
+  const hourlyTimes = forecastHourly?.time ?? [];
+  const startIndex = Math.max(
+    hourlyTimes.findIndex((time) => new Date(time).getTime() >= now - 60 * 60 * 1000),
+    0
+  );
+
+  const hourly = hourlyTimes.slice(startIndex, startIndex + 12).map((time, offset) => {
+    const index = startIndex + offset;
+    const weatherCode = getHourlyNumber(forecastHourly?.weather_code, index);
+    const hourAqiIndex = airQualityHourly?.time?.findIndex((aqTime) => aqTime === time) ?? -1;
+    const aqiValue =
+      hourAqiIndex >= 0 ? getHourlyNumber(airQualityHourly?.us_aqi, hourAqiIndex) : undefined;
+
+    return {
+      time,
+      temperature: roundValue(getHourlyNumber(forecastHourly?.temperature_2m, index)),
+      feelsLike: roundValue(getHourlyNumber(forecastHourly?.apparent_temperature, index)),
+      humidity: roundValue(getHourlyNumber(forecastHourly?.relative_humidity_2m, index)),
+      dewpoint: roundValue(getHourlyNumber(forecastHourly?.dew_point_2m, index)),
+      precipChance: roundValue(getHourlyNumber(forecastHourly?.precipitation_probability, index)),
+      weatherCode,
+      textDescription: openMeteoCodeToText(weatherCode),
+      windSpeed: roundValue(getHourlyNumber(forecastHourly?.wind_speed_10m, index)),
+      windDirection: degreesToCompass(getHourlyNumber(forecastHourly?.wind_direction_10m, index)),
+      windGust: roundValue(getHourlyNumber(forecastHourly?.wind_gusts_10m, index)),
+      uvIndex: roundValue(getHourlyNumber(forecastHourly?.uv_index, index), 1),
+      pressureInHg: hPaToInHg(getHourlyNumber(forecastHourly?.surface_pressure, index)),
+      visibilityMiles: metersToMiles(getHourlyNumber(forecastHourly?.visibility, index)),
+      aqi: roundValue(aqiValue),
+      pm25: hourAqiIndex >= 0 ? roundValue(getHourlyNumber(airQualityHourly?.pm2_5, hourAqiIndex), 1) : undefined,
+      pm10: hourAqiIndex >= 0 ? roundValue(getHourlyNumber(airQualityHourly?.pm10, hourAqiIndex), 1) : undefined
+    };
+  });
+
+  return {
+    currentConditions,
+    hourly
   };
 }
 
@@ -417,16 +657,17 @@ export async function getPointForecast(lat: number, lon: number): Promise<PointF
 }
 
 export async function getPointCurrentConditions(lat: number, lon: number): Promise<CurrentConditionsResponse> {
-  const [point, currentConditions] = await Promise.all([
+  const [point, weatherBundle] = await Promise.all([
     fetchJson(`${weatherBase}/points/${lat.toFixed(4)},${lon.toFixed(4)}`, 300).then((data) => pointSchema.parse(data)),
-    getOpenMeteoCurrentConditions(lat, lon)
+    getOpenMeteoWeatherBundle(lat, lon)
   ]);
   const city = point.properties.relativeLocation?.properties.city;
   const state = point.properties.relativeLocation?.properties.state;
   const county = normalizeCounty(point.properties.relativeLocation?.properties.county);
 
   return {
-    currentConditions,
+    currentConditions: weatherBundle.currentConditions,
+    hourly: weatherBundle.hourly,
     locationLabel: city && state ? `${city}, ${state}` : undefined,
     countyLabel: county
   };

@@ -14,14 +14,14 @@ export function TeamMemberCard({ member }: { member: TeamMember }) {
   return (
     <article className="team-member-card">
       <div className="team-headshot">
-        {member.imageUrl ? <img alt={`${member.name} headshot`} src={member.imageUrl} /> : <span>{initialsFor(member.name)}</span>}
+        {member.photoUrl ? <img alt={`${member.name} headshot`} src={member.photoUrl} /> : <span>{initialsFor(member.name)}</span>}
       </div>
       <div className="team-member-body">
         <span>{member.role}</span>
         <h2>{member.name}</h2>
         <p>{member.bio}</p>
-        {member.linkUrl ? (
-          <a className="team-link" href={member.linkUrl} rel="noreferrer" target="_blank">
+        {member.socialUrl ? (
+          <a className="team-link" href={member.socialUrl} rel="noreferrer" target="_blank">
             View profile
             <ExternalLink aria-hidden="true" size={16} />
           </a>
