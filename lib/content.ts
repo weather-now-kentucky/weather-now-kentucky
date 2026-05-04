@@ -84,6 +84,12 @@ const fallbackSettings: SiteSettings = {
   youtubeVideoId: process.env.NEXT_PUBLIC_YOUTUBE_LIVE_VIDEO_ID ?? ""
 };
 
+function contentDebug(message: string, payload?: unknown) {
+  if (process.env.NODE_ENV !== "production") {
+    console.info(message, payload);
+  }
+}
+
 const fallbackPosts: BlogPost[] = [
   {
     id: "sample-1",
@@ -366,37 +372,46 @@ export async function updateSponsor(id: string, sponsor: Omit<Sponsor, "id" | "d
 
 export async function saveSponsorPlacement(placement: Omit<SponsorPlacement, "id" | "createdAtLabel" | "updatedAtLabel">) {
   const db = getFirebaseDb();
-  await addDoc(collection(db, "sponsorPlacements"), {
+  contentDebug("Firestore saveSponsorPlacement payload", placement);
+  const created = await addDoc(collection(db, "sponsorPlacements"), {
     ...placement,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp()
   });
+  contentDebug("Firestore saveSponsorPlacement response", { id: created.id });
+  return created.id;
 }
 
 export async function updateSponsorPlacement(id: string, placement: Omit<SponsorPlacement, "id" | "createdAtLabel" | "updatedAtLabel">) {
   const db = getFirebaseDb();
+  contentDebug("Firestore updateSponsorPlacement payload", { id, placement });
   await updateDoc(doc(db, "sponsorPlacements", id), {
     ...placement,
     updatedAt: serverTimestamp()
   });
+  contentDebug("Firestore updateSponsorPlacement response", { id });
 }
 
 export async function saveTeamMember(member: Omit<TeamMember, "id" | "createdAtLabel" | "updatedAtLabel">) {
   const db = getFirebaseDb();
+  contentDebug("Firestore saveTeamMember payload", member);
   const created = await addDoc(collection(db, "teamMembers"), {
     ...member,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp()
   });
+  contentDebug("Firestore saveTeamMember response", { id: created.id });
   return created.id;
 }
 
 export async function updateTeamMember(id: string, member: Omit<TeamMember, "id" | "createdAtLabel" | "updatedAtLabel">) {
   const db = getFirebaseDb();
+  contentDebug("Firestore updateTeamMember payload", { id, member });
   await updateDoc(doc(db, "teamMembers", id), {
     ...member,
     updatedAt: serverTimestamp()
   });
+  contentDebug("Firestore updateTeamMember response", { id });
 }
 
 export async function deleteTeamMember(id: string) {

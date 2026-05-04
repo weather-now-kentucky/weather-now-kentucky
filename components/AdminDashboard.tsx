@@ -88,6 +88,25 @@ const emptyTeamMember: TeamMemberFormState = {
   status: "active" as const
 };
 
+function isValidOptionalUrl(value: string) {
+  if (!value.trim()) {
+    return true;
+  }
+
+  try {
+    new URL(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function adminDebug(message: string, payload?: unknown) {
+  if (process.env.NODE_ENV !== "production") {
+    console.info(message, payload);
+  }
+}
+
 export function AdminDashboard() {
   const configured = useMemo(() => isFirebaseConfigured(), []);
   const [user, setUser] = useState<User | null>(null);
@@ -240,21 +259,49 @@ export function AdminDashboard() {
     setIsSavingPlacement(true);
 
     try {
-      if (!placementForm.sponsorId) {
+      const placementPayload = {
+        ...placementForm,
+        sectionKey: placementForm.sectionKey.trim(),
+        sectionLabel: placementForm.sectionLabel.trim(),
+        sponsorId: placementForm.sponsorId.trim(),
+        displayLabel: placementForm.displayLabel.trim() || "Sponsored by",
+        rotationGroup: placementForm.rotationGroup.trim(),
+        priority: Number.isFinite(placementForm.priority) ? placementForm.priority : 0
+      };
+
+      adminDebug("Admin sponsor placement submit", {
+        selectedPlacementId,
+        placementPayload,
+        sponsorCount: sponsors.length,
+        selectedSponsor: sponsors.find((sponsor) => sponsor.id === placementPayload.sponsorId) ?? null
+      });
+
+      if (!placementPayload.sectionKey || !placementPayload.sectionLabel) {
+        throw new Error("Choose a section for this placement.");
+      }
+
+      if (!placementPayload.sponsorId) {
         throw new Error("Choose a sponsor for this placement.");
       }
 
       if (selectedPlacementId) {
-        await updateSponsorPlacement(selectedPlacementId, placementForm);
+        await updateSponsorPlacement(selectedPlacementId, placementPayload);
+        adminDebug("Admin sponsor placement updated", { id: selectedPlacementId });
         setMessage("Sponsor placement updated.");
       } else {
-        await saveSponsorPlacement(placementForm);
+        const createdId = await saveSponsorPlacement(placementPayload);
+        adminDebug("Admin sponsor placement created", { id: createdId });
         setMessage("Sponsor placement added.");
       }
 
       setPlacementForm(emptyPlacement);
       setSelectedPlacementId("");
-      setSponsorPlacements(await getSponsorPlacements(false));
+      try {
+        setSponsorPlacements(await getSponsorPlacements(false));
+      } catch (refreshError) {
+        console.error("Sponsor placement saved, but refresh failed.", refreshError);
+        setMessage("Sponsor placement saved. Refresh the admin page if it does not appear in the list.");
+      }
     } catch (error) {
       console.error("Unable to save sponsor placement.", error);
       setMessage(error instanceof Error ? error.message : "Unable to save sponsor placement.");
@@ -269,16 +316,43 @@ export function AdminDashboard() {
     setIsSavingTeamMember(true);
 
     try {
+      const memberPayload = {
+        ...teamMemberForm,
+        name: teamMemberForm.name.trim(),
+        role: teamMemberForm.role.trim(),
+        bio: teamMemberForm.bio.trim(),
+        photoUrl: teamMemberForm.photoUrl.trim(),
+        photoStoragePath: teamMemberForm.photoStoragePath.trim(),
+        socialUrl: teamMemberForm.socialUrl.trim(),
+        order: Number.isFinite(teamMemberForm.order) ? teamMemberForm.order : 0
+      };
+
+      adminDebug("Admin team member submit", {
+        selectedTeamMemberId,
+        memberPayload,
+        hasHeadshotFile: Boolean(teamHeadshotFile),
+        headshotFileName: teamHeadshotFile?.name ?? null
+      });
+
+      if (!memberPayload.name || !memberPayload.role || !memberPayload.bio) {
+        throw new Error("Name, role, and bio are required.");
+      }
+
+      if (!isValidOptionalUrl(memberPayload.socialUrl)) {
+        throw new Error("Enter a full social/link URL, including https://, or leave it blank.");
+      }
+
       if (teamHeadshotFile && teamHeadshotFile.size > 2_000_000) {
         throw new Error("Headshot file must be 2 MB or smaller.");
       }
 
-      let photoUrl = teamMemberForm.photoUrl;
-      let photoStoragePath = teamMemberForm.photoStoragePath;
+      let photoUrl = memberPayload.photoUrl;
+      let photoStoragePath = memberPayload.photoStoragePath;
       let teamMemberId = selectedTeamMemberId;
 
       if (!teamMemberId) {
-        teamMemberId = await saveTeamMember(teamMemberForm);
+        teamMemberId = await saveTeamMember(memberPayload);
+        adminDebug("Admin team member created", { id: teamMemberId });
       }
 
       if (teamHeadshotFile) {
@@ -290,17 +364,23 @@ export function AdminDashboard() {
       }
 
       await updateTeamMember(teamMemberId, {
-        ...teamMemberForm,
+        ...memberPayload,
         photoUrl,
         photoStoragePath
       });
+      adminDebug("Admin team member updated", { id: teamMemberId });
 
       setMessage(selectedTeamMemberId ? "Team member updated." : "Team member added.");
       setTeamMemberForm(emptyTeamMember);
       setSelectedTeamMemberId("");
       setTeamHeadshotFile(null);
       setTeamHeadshotPreview("");
-      setTeamMembers(await getTeamMembers(false, false));
+      try {
+        setTeamMembers(await getTeamMembers(false, false));
+      } catch (refreshError) {
+        console.error("Team member saved, but refresh failed.", refreshError);
+        setMessage("Team member saved. Refresh the admin page if it does not appear in the list.");
+      }
     } catch (error) {
       console.error("Unable to save team member.", error);
       setMessage(error instanceof Error ? error.message : "Unable to save team member.");
@@ -738,7 +818,7 @@ export function AdminDashboard() {
       </div>
 
       <div className="grid two">
-        <form className="panel admin-form" onSubmit={handlePlacement}>
+        <form className="panel admin-form" noValidate onSubmit={handlePlacement}>
           <h2>{selectedPlacementId ? "Edit sponsor placement" : "Add sponsor placement"}</h2>
           <div className="field">
             <label htmlFor="placementSection">Section</label>
@@ -818,7 +898,18 @@ export function AdminDashboard() {
             />
           </div>
           <div className="admin-actions">
-            <button className="button" disabled={isSavingPlacement || sponsors.length === 0} type="submit">
+            <button
+              className="button"
+              disabled={isSavingPlacement}
+              onClick={() =>
+                adminDebug("Admin Add Placement button clicked", {
+                  disabled: isSavingPlacement,
+                  placementForm,
+                  selectedPlacementId
+                })
+              }
+              type="submit"
+            >
               {selectedPlacementId ? <Save aria-hidden="true" size={16} /> : <Plus aria-hidden="true" size={16} />}
               {isSavingPlacement ? "Saving placement..." : selectedPlacementId ? "Update placement" : "Add placement"}
             </button>
@@ -852,7 +943,7 @@ export function AdminDashboard() {
       </div>
 
       <div className="grid two">
-        <form className="panel admin-form" onSubmit={handleTeamMember}>
+        <form className="panel admin-form" noValidate onSubmit={handleTeamMember}>
           <h2>{selectedTeamMemberId ? "Edit team member" : "Add team member"}</h2>
           <div className="field">
             <label htmlFor="teamName">Name</label>
@@ -933,7 +1024,19 @@ export function AdminDashboard() {
             />
           </div>
           <div className="admin-actions">
-            <button className="button" disabled={isSavingTeamMember} type="submit">
+            <button
+              className="button"
+              disabled={isSavingTeamMember}
+              onClick={() =>
+                adminDebug("Admin Add Team Member button clicked", {
+                  disabled: isSavingTeamMember,
+                  teamMemberForm,
+                  selectedTeamMemberId,
+                  hasHeadshotFile: Boolean(teamHeadshotFile)
+                })
+              }
+              type="submit"
+            >
               {selectedTeamMemberId ? <Save aria-hidden="true" size={16} /> : <Plus aria-hidden="true" size={16} />}
               {isSavingTeamMember ? "Saving member..." : selectedTeamMemberId ? "Update member" : "Add member"}
             </button>
