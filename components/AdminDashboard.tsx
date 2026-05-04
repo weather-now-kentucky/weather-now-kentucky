@@ -113,6 +113,7 @@ export function AdminDashboard() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
+  const [actionDebug, setActionDebug] = useState("");
   const [settings, setSettings] = useState<SiteSettings>({ forecastOverride: "", isLive: false, youtubeVideoId: "" });
   const [posts, setPosts] = useState<BlogPost[]>([]);
   const [selectedPostId, setSelectedPostId] = useState("");
@@ -132,6 +133,11 @@ export function AdminDashboard() {
   const [teamHeadshotFile, setTeamHeadshotFile] = useState<File | null>(null);
   const [teamHeadshotPreview, setTeamHeadshotPreview] = useState("");
   const [isSavingTeamMember, setIsSavingTeamMember] = useState(false);
+
+  function debugAction(text: string, payload?: unknown) {
+    setActionDebug(text);
+    adminDebug(text, payload);
+  }
 
   useEffect(() => {
     if (!configured) {
@@ -253,8 +259,8 @@ export function AdminDashboard() {
     }
   }
 
-  async function handlePlacement(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function savePlacementAction() {
+    debugAction("Add Placement clicked", { placementForm, selectedPlacementId });
     setMessage("");
     setIsSavingPlacement(true);
 
@@ -269,7 +275,7 @@ export function AdminDashboard() {
         priority: Number.isFinite(placementForm.priority) ? placementForm.priority : 0
       };
 
-      adminDebug("Admin sponsor placement submit", {
+      debugAction("Add Placement validation started", {
         selectedPlacementId,
         placementPayload,
         sponsorCount: sponsors.length,
@@ -277,20 +283,25 @@ export function AdminDashboard() {
       });
 
       if (!placementPayload.sectionKey || !placementPayload.sectionLabel) {
+        debugAction("Add Placement validation failed: missing section", placementPayload);
         throw new Error("Choose a section for this placement.");
       }
 
       if (!placementPayload.sponsorId) {
+        debugAction("Add Placement validation failed: missing sponsor", placementPayload);
         throw new Error("Choose a sponsor for this placement.");
       }
+      debugAction("Add Placement validation passed", placementPayload);
 
       if (selectedPlacementId) {
+        debugAction("Firebase placement update started", { id: selectedPlacementId, placementPayload });
         await updateSponsorPlacement(selectedPlacementId, placementPayload);
-        adminDebug("Admin sponsor placement updated", { id: selectedPlacementId });
+        debugAction("Firebase placement update success", { id: selectedPlacementId });
         setMessage("Sponsor placement updated.");
       } else {
+        debugAction("Firebase placement write started", placementPayload);
         const createdId = await saveSponsorPlacement(placementPayload);
-        adminDebug("Admin sponsor placement created", { id: createdId });
+        debugAction("Firebase placement write success", { id: createdId });
         setMessage("Sponsor placement added.");
       }
 
@@ -300,18 +311,29 @@ export function AdminDashboard() {
         setSponsorPlacements(await getSponsorPlacements(false));
       } catch (refreshError) {
         console.error("Sponsor placement saved, but refresh failed.", refreshError);
+        debugAction("Firebase placement refresh error", refreshError);
         setMessage("Sponsor placement saved. Refresh the admin page if it does not appear in the list.");
       }
     } catch (error) {
       console.error("Unable to save sponsor placement.", error);
+      debugAction("Firebase placement write error", error);
       setMessage(error instanceof Error ? error.message : "Unable to save sponsor placement.");
     } finally {
       setIsSavingPlacement(false);
     }
   }
 
-  async function handleTeamMember(event: FormEvent<HTMLFormElement>) {
+  async function handlePlacement(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    await savePlacementAction();
+  }
+
+  async function saveTeamMemberAction() {
+    debugAction("Add Member clicked", {
+      teamMemberForm,
+      selectedTeamMemberId,
+      hasHeadshotFile: Boolean(teamHeadshotFile)
+    });
     setMessage("");
     setIsSavingTeamMember(true);
 
@@ -327,7 +349,7 @@ export function AdminDashboard() {
         order: Number.isFinite(teamMemberForm.order) ? teamMemberForm.order : 0
       };
 
-      adminDebug("Admin team member submit", {
+      debugAction("Add Member validation started", {
         selectedTeamMemberId,
         memberPayload,
         hasHeadshotFile: Boolean(teamHeadshotFile),
@@ -335,24 +357,29 @@ export function AdminDashboard() {
       });
 
       if (!memberPayload.name || !memberPayload.role || !memberPayload.bio) {
+        debugAction("Add Member validation failed: missing required fields", memberPayload);
         throw new Error("Name, role, and bio are required.");
       }
 
       if (!isValidOptionalUrl(memberPayload.socialUrl)) {
+        debugAction("Add Member validation failed: invalid URL", memberPayload);
         throw new Error("Enter a full social/link URL, including https://, or leave it blank.");
       }
 
       if (teamHeadshotFile && teamHeadshotFile.size > 2_000_000) {
+        debugAction("Add Member validation failed: headshot too large", { size: teamHeadshotFile.size });
         throw new Error("Headshot file must be 2 MB or smaller.");
       }
+      debugAction("Add Member validation passed", memberPayload);
 
       let photoUrl = memberPayload.photoUrl;
       let photoStoragePath = memberPayload.photoStoragePath;
       let teamMemberId = selectedTeamMemberId;
 
       if (!teamMemberId) {
+        debugAction("Firebase team member write started", memberPayload);
         teamMemberId = await saveTeamMember(memberPayload);
-        adminDebug("Admin team member created", { id: teamMemberId });
+        debugAction("Firebase team member write success", { id: teamMemberId });
       }
 
       if (teamHeadshotFile) {
@@ -363,12 +390,13 @@ export function AdminDashboard() {
         photoUrl = await getDownloadURL(headshotRef);
       }
 
+      debugAction("Firebase team member update started", { id: teamMemberId, memberPayload });
       await updateTeamMember(teamMemberId, {
         ...memberPayload,
         photoUrl,
         photoStoragePath
       });
-      adminDebug("Admin team member updated", { id: teamMemberId });
+      debugAction("Firebase team member update success", { id: teamMemberId });
 
       setMessage(selectedTeamMemberId ? "Team member updated." : "Team member added.");
       setTeamMemberForm(emptyTeamMember);
@@ -379,14 +407,21 @@ export function AdminDashboard() {
         setTeamMembers(await getTeamMembers(false, false));
       } catch (refreshError) {
         console.error("Team member saved, but refresh failed.", refreshError);
+        debugAction("Firebase team member refresh error", refreshError);
         setMessage("Team member saved. Refresh the admin page if it does not appear in the list.");
       }
     } catch (error) {
       console.error("Unable to save team member.", error);
+      debugAction("Firebase team member write error", error);
       setMessage(error instanceof Error ? error.message : "Unable to save team member.");
     } finally {
       setIsSavingTeamMember(false);
     }
+  }
+
+  async function handleTeamMember(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await saveTeamMemberAction();
   }
 
   function editPost(post: BlogPost) {
@@ -434,6 +469,7 @@ export function AdminDashboard() {
   }
 
   function startSponsorPlacement(sponsor: Sponsor) {
+    debugAction("Place Sponsor clicked", { sponsor });
     setSelectedPlacementId("");
     setPlacementForm((current) => ({
       ...current,
@@ -444,7 +480,9 @@ export function AdminDashboard() {
   }
 
   async function deactivateSponsor(sponsor: Sponsor) {
+    debugAction("Delete Sponsor clicked", { sponsor });
     try {
+      debugAction("Firebase sponsor deactivate started", { sponsorId: sponsor.id });
       await updateSponsor(sponsor.id, {
         name: sponsor.name,
         businessCategory: sponsor.businessCategory,
@@ -457,9 +495,17 @@ export function AdminDashboard() {
         endDate: sponsor.endDate ?? "",
         notes: sponsor.notes ?? ""
       });
+      debugAction("Firebase sponsor deactivate success", { sponsorId: sponsor.id });
       setMessage("Sponsor deactivated.");
-      setSponsors(await getSponsors(false));
+      try {
+        setSponsors(await getSponsors(false));
+      } catch (refreshError) {
+        console.error("Sponsor deactivated, but refresh failed.", refreshError);
+        debugAction("Firebase sponsor refresh error", refreshError);
+        setMessage("Sponsor deactivated. Refresh the admin page if it does not update in the list.");
+      }
     } catch (error) {
+      debugAction("Firebase sponsor deactivate error", error);
       setMessage(error instanceof Error ? error.message : "Unable to deactivate sponsor.");
     }
   }
@@ -561,6 +607,11 @@ export function AdminDashboard() {
       </div>
 
       {message ? <p className="panel status-line">{message}</p> : null}
+      {actionDebug ? (
+        <p className="panel status-line" data-admin-debug="true">
+          Debug: {actionDebug}
+        </p>
+      ) : null}
 
       <form className="panel admin-form" onSubmit={handleSettings}>
         <h2>Live and forecast settings</h2>
@@ -901,14 +952,8 @@ export function AdminDashboard() {
             <button
               className="button"
               disabled={isSavingPlacement}
-              onClick={() =>
-                adminDebug("Admin Add Placement button clicked", {
-                  disabled: isSavingPlacement,
-                  placementForm,
-                  selectedPlacementId
-                })
-              }
-              type="submit"
+              onClick={() => void savePlacementAction()}
+              type="button"
             >
               {selectedPlacementId ? <Save aria-hidden="true" size={16} /> : <Plus aria-hidden="true" size={16} />}
               {isSavingPlacement ? "Saving placement..." : selectedPlacementId ? "Update placement" : "Add placement"}
@@ -1027,15 +1072,8 @@ export function AdminDashboard() {
             <button
               className="button"
               disabled={isSavingTeamMember}
-              onClick={() =>
-                adminDebug("Admin Add Team Member button clicked", {
-                  disabled: isSavingTeamMember,
-                  teamMemberForm,
-                  selectedTeamMemberId,
-                  hasHeadshotFile: Boolean(teamHeadshotFile)
-                })
-              }
-              type="submit"
+              onClick={() => void saveTeamMemberAction()}
+              type="button"
             >
               {selectedTeamMemberId ? <Save aria-hidden="true" size={16} /> : <Plus aria-hidden="true" size={16} />}
               {isSavingTeamMember ? "Saving member..." : selectedTeamMemberId ? "Update member" : "Add member"}
