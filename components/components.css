@@ -1182,6 +1182,15 @@
 }
 
 .radar-tabs {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.radar-tab-group,
+.radar-control-group {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -1206,9 +1215,31 @@
 }
 
 .radar-tab:focus-visible,
+.radar-control-button:focus-visible,
 .weatherwise-logo-link:focus-visible {
   outline: 3px solid rgba(248, 113, 113, 0.7);
   outline-offset: 2px;
+}
+
+.radar-control-button {
+  align-items: center;
+  background: #1e293b;
+  border: 1px solid #475569;
+  border-radius: 4px;
+  color: #f8fafc;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 0.82rem;
+  font-weight: 950;
+  gap: 7px;
+  justify-content: center;
+  min-height: 42px;
+  padding: 10px 12px;
+  text-transform: uppercase;
+}
+
+.radar-control-button:hover {
+  background: #334155;
 }
 
 .radar-frame-wrap {
@@ -1263,7 +1294,7 @@
   background: #111827;
   border-bottom: 1px solid #334155;
   display: grid;
-  gap: 5px;
+  gap: 8px;
   padding: 14px;
 }
 
@@ -1282,6 +1313,46 @@
 .future-radar-heading small {
   font-size: 0.78rem;
   font-weight: 950;
+  text-transform: uppercase;
+}
+
+.future-radar-recommendations {
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-left: 4px solid var(--accent);
+  border-radius: 4px;
+  display: grid;
+  gap: 10px;
+  margin-top: 6px;
+  padding: 12px;
+}
+
+.future-radar-recommendations strong {
+  color: #f8fafc;
+  font-size: 0.86rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.future-radar-recommendations ul {
+  color: #e2e8f0;
+  display: grid;
+  gap: 8px;
+  line-height: 1.35;
+  list-style-position: outside;
+  margin: 0;
+  padding-left: 20px;
+}
+
+.future-radar-recommendations li {
+  padding-left: 2px;
+}
+
+.future-radar-recommendations p {
+  color: #cbd5e1;
+  font-size: 0.82rem;
+  font-weight: 900;
+  line-height: 1.35;
   text-transform: uppercase;
 }
 
@@ -1326,6 +1397,48 @@
   height: 26px;
   object-fit: contain;
   width: 26px;
+}
+
+.radar-fullscreen-active {
+  overflow: hidden;
+}
+
+.radar-fullscreen-overlay {
+  background: rgba(2, 6, 23, 0.98);
+  display: grid;
+  gap: 10px;
+  grid-template-rows: auto minmax(0, 1fr);
+  inset: 0;
+  padding: 10px;
+  position: fixed;
+  z-index: 1000;
+}
+
+.radar-fullscreen-bar {
+  align-items: center;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-left: 5px solid var(--accent);
+  border-radius: 4px;
+  color: #f8fafc;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 10px 12px;
+}
+
+.radar-fullscreen-bar strong {
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.radar-fullscreen-frame {
+  background: #020617;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  height: 100%;
+  width: 100%;
 }
 
 .blog-card {

@@ -1,7 +1,8 @@
 "use client";
 
+import { Maximize2, X } from "lucide-react";
 import type { FormEvent } from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type RadarCenter = {
   lat: number;
@@ -21,8 +22,8 @@ const selectedLocationZoom = 8.5;
 const mainHrrrCycles = [0, 6, 12, 18];
 const hrrrCycleBufferMinutes = 90;
 
-function buildWeatherWiseUrl(center: RadarCenter) {
-  return `https://web.weatherwise.app/#map=${center.zoom}/${center.lat.toFixed(4)}/${center.lon.toFixed(4)}&m=COMPOSITE&autoplay=1&ui=0`;
+function buildWeatherWiseUrl(center: RadarCenter, isPlaying: boolean) {
+  return `https://web.weatherwise.app/#map=${center.zoom}/${center.lat.toFixed(4)}/${center.lon.toFixed(4)}&m=COMPOSITE&autoplay=${isPlaying ? "1" : "0"}&ui=0`;
 }
 
 function formatHrrrRun(date: Date) {
@@ -60,10 +61,34 @@ export function RadarTabs() {
   const [locationStatus, setLocationStatus] = useState("Radar is centered on Kentucky.");
   const [isLocating, setIsLocating] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
-  const liveRadarUrl = useMemo(() => buildWeatherWiseUrl(center), [center]);
+  const [isLivePlaying, setIsLivePlaying] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const liveRadarUrl = useMemo(() => buildWeatherWiseUrl(center, isLivePlaying), [center, isLivePlaying]);
   const latestMainHrrrRun = useMemo(() => getLatestMainHrrrRun(), []);
   const latestMainHrrrRunId = useMemo(() => formatHrrrRun(latestMainHrrrRun), [latestMainHrrrRun]);
   const futureRadarUrl = useMemo(() => buildWeatherWiseFutureUrl(center, latestMainHrrrRunId), [center, latestMainHrrrRunId]);
+  const selectedRadarUrl = activeTab === "live" ? liveRadarUrl : futureRadarUrl;
+  const selectedRadarTitle = activeTab === "live" ? "WeatherWise live radar for Kentucky" : "WeatherWise HRRR future radar for Kentucky";
+
+  useEffect(() => {
+    if (!isExpanded) {
+      return;
+    }
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsExpanded(false);
+      }
+    }
+
+    document.body.classList.add("radar-fullscreen-active");
+    window.addEventListener("keydown", closeOnEscape);
+
+    return () => {
+      document.body.classList.remove("radar-fullscreen-active");
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [isExpanded]);
 
   function updateRadarCenter(lat: number, lon: number, label: string) {
     setCenter({ lat, lon, label, zoom: selectedLocationZoom });
@@ -152,24 +177,37 @@ export function RadarTabs() {
       </div>
 
       <div className="radar-tabs" role="tablist" aria-label="Radar views">
-        <button
-          aria-selected={activeTab === "live"}
-          className="radar-tab"
-          onClick={() => setActiveTab("live")}
-          role="tab"
-          type="button"
-        >
-          Live Radar
-        </button>
-        <button
-          aria-selected={activeTab === "future"}
-          className="radar-tab"
-          onClick={() => setActiveTab("future")}
-          role="tab"
-          type="button"
-        >
-          Future Radar
-        </button>
+        <div className="radar-tab-group">
+          <button
+            aria-selected={activeTab === "live"}
+            className="radar-tab"
+            onClick={() => setActiveTab("live")}
+            role="tab"
+            type="button"
+          >
+            Live Radar
+          </button>
+          <button
+            aria-selected={activeTab === "future"}
+            className="radar-tab"
+            onClick={() => setActiveTab("future")}
+            role="tab"
+            type="button"
+          >
+            Future Radar
+          </button>
+        </div>
+        <div className="radar-control-group">
+          {activeTab === "live" ? (
+            <button className="radar-control-button" onClick={() => setIsLivePlaying((value) => !value)} type="button">
+              {isLivePlaying ? "Pause Radar" : "Play Radar"}
+            </button>
+          ) : null}
+          <button className="radar-control-button" onClick={() => setIsExpanded(true)} type="button">
+            <Maximize2 aria-hidden="true" size={16} />
+            Full Screen
+          </button>
+        </div>
       </div>
 
       <div className="radar-frame-wrap" role="tabpanel">
@@ -196,8 +234,17 @@ export function RadarTabs() {
             <div className="future-radar-heading">
               <span className="eyebrow">Future Radar</span>
               <h2>HRRR Future Radar</h2>
-              <p>HRRR model guidance from the latest main run, capped near 30 hours when supported.</p>
               <small>Selected main run: {latestMainHrrrRunId.replaceAll("_", " ")} UTC</small>
+              <div className="future-radar-recommendations">
+                <strong>Recommendations</strong>
+                <ul>
+                  <li>Open the Model Drawer (bottom-left)</li>
+                  <li>Set Reflectivity Gate Filter to +8 dBZ</li>
+                  <li>Use Composite Reflectivity (for future radar)</li>
+                  <li>Press Play to animate</li>
+                </ul>
+                <p>Model guidance - not real-time radar</p>
+              </div>
             </div>
             <iframe
               allowFullScreen
@@ -225,6 +272,33 @@ export function RadarTabs() {
           <span>More Radar &amp; Model Tools from WeatherWise</span>
         </a>
       </div>
+
+      {isExpanded ? (
+        <div className="radar-fullscreen-overlay" role="dialog" aria-label="Expanded radar view" aria-modal="true">
+          <div className="radar-fullscreen-bar">
+            <strong>{activeTab === "live" ? "Live Radar" : "Future Radar - HRRR"}</strong>
+            <div className="radar-control-group">
+              {activeTab === "live" ? (
+                <button className="radar-control-button" onClick={() => setIsLivePlaying((value) => !value)} type="button">
+                  {isLivePlaying ? "Pause Radar" : "Play Radar"}
+                </button>
+              ) : null}
+              <button className="radar-control-button" onClick={() => setIsExpanded(false)} type="button">
+                <X aria-hidden="true" size={16} />
+                Exit Full Screen
+              </button>
+            </div>
+          </div>
+          <iframe
+            allowFullScreen
+            className="radar-fullscreen-frame"
+            key={`expanded-${selectedRadarUrl}`}
+            referrerPolicy="strict-origin-when-cross-origin"
+            src={selectedRadarUrl}
+            title={`${selectedRadarTitle} expanded`}
+          />
+        </div>
+      ) : null}
     </section>
   );
 }

@@ -121,6 +121,7 @@ const openMeteoForecastSchema = z.object({
     wind_speed_10m: z.number().nullable().optional(),
     wind_direction_10m: z.number().nullable().optional(),
     wind_gusts_10m: z.number().nullable().optional(),
+    precipitation: z.number().nullable().optional(),
     surface_pressure: z.number().nullable().optional(),
     pressure_msl: z.number().nullable().optional(),
     visibility: z.number().nullable().optional(),
@@ -134,6 +135,7 @@ const openMeteoForecastSchema = z.object({
       relative_humidity_2m: nullableNumberArray,
       dew_point_2m: nullableNumberArray,
       precipitation_probability: nullableNumberArray,
+      precipitation: nullableNumberArray,
       weather_code: nullableNumberArray,
       wind_speed_10m: nullableNumberArray,
       wind_direction_10m: nullableNumberArray,
@@ -217,6 +219,7 @@ export type CurrentConditions = {
   pm25?: number;
   pm10?: number;
   dust?: number;
+  precipAmount?: number;
   textDescription?: string;
   weatherCode?: number;
   observedAt?: string;
@@ -231,6 +234,7 @@ export type HourlyForecastHour = {
   humidity?: number;
   dewpoint?: number;
   precipChance?: number;
+  precipAmount?: number;
   weatherCode?: number;
   textDescription?: string;
   windSpeed?: number;
@@ -482,11 +486,11 @@ async function getOpenMeteoWeatherBundle(
   forecastUrl.searchParams.set("longitude", String(lon));
   forecastUrl.searchParams.set(
     "current",
-    "temperature_2m,relative_humidity_2m,apparent_temperature,dew_point_2m,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m,surface_pressure,pressure_msl,visibility,uv_index"
+    "temperature_2m,relative_humidity_2m,apparent_temperature,dew_point_2m,precipitation,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m,surface_pressure,pressure_msl,visibility,uv_index"
   );
   forecastUrl.searchParams.set(
     "hourly",
-    "temperature_2m,apparent_temperature,relative_humidity_2m,dew_point_2m,precipitation_probability,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m,uv_index,surface_pressure,visibility"
+    "temperature_2m,apparent_temperature,relative_humidity_2m,dew_point_2m,precipitation_probability,precipitation,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m,uv_index,surface_pressure,visibility"
   );
   forecastUrl.searchParams.set("temperature_unit", "fahrenheit");
   forecastUrl.searchParams.set("wind_speed_unit", "mph");
@@ -547,6 +551,7 @@ async function getOpenMeteoWeatherBundle(
     pm25: roundValue(airQuality?.pm2_5, 1),
     pm10: roundValue(airQuality?.pm10, 1),
     dust: roundValue(airQuality?.dust, 1),
+    precipAmount: roundValue(current.precipitation, 2),
     textDescription: openMeteoCodeToText(current.weather_code),
     weatherCode: typeof current.weather_code === "number" ? current.weather_code : undefined,
     observedAt: "Open-Meteo",
@@ -577,6 +582,7 @@ async function getOpenMeteoWeatherBundle(
       humidity: roundValue(getHourlyNumber(forecastHourly?.relative_humidity_2m, index)),
       dewpoint: roundValue(getHourlyNumber(forecastHourly?.dew_point_2m, index)),
       precipChance: roundValue(getHourlyNumber(forecastHourly?.precipitation_probability, index)),
+      precipAmount: roundValue(getHourlyNumber(forecastHourly?.precipitation, index), 2),
       weatherCode,
       textDescription: openMeteoCodeToText(weatherCode),
       windSpeed: roundValue(getHourlyNumber(forecastHourly?.wind_speed_10m, index)),

@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { Fish, Hammer, Shield, Trophy } from "lucide-react";
-import type { CurrentConditions, HourlyForecastHour } from "@/lib/weather";
+import { Fish, Flower2, Hammer, Shield, Trophy } from "lucide-react";
 import { SectionSponsorTag } from "@/components/SectionSponsorTag";
+import type { CurrentConditions, HourlyForecastHour } from "@/lib/weather";
+import { analyzeRainSignal } from "@/lib/weatherIntelligence";
 
 type OutdoorConditionsProps = {
   current: CurrentConditions | null;
@@ -25,23 +26,19 @@ function clampScore(score: number) {
   return Math.max(1, Math.min(10, score));
 }
 
-function scoreLabel(score: number) {
-  if (score >= 9) {
-    return "Excellent";
+function scoreLabel(score: number, id?: string) {
+  if (id === "sneeze-score") {
+    if (score >= 8) return "Low allergy concern";
+    if (score >= 6) return "Manageable";
+    if (score >= 4) return "Moderate allergy sensitivity";
+    if (score >= 2) return "High allergy sensitivity";
+    return "Rough allergy day";
   }
 
-  if (score >= 7) {
-    return "Good";
-  }
-
-  if (score >= 5) {
-    return "Fair";
-  }
-
-  if (score >= 3) {
-    return "Poor";
-  }
-
+  if (score >= 9) return "Excellent";
+  if (score >= 7) return "Good";
+  if (score >= 5) return "Fair";
+  if (score >= 3) return "Poor";
   return "Bad";
 }
 
@@ -61,20 +58,44 @@ function metric(label: string, value: string) {
   return `${label}: ${value}`;
 }
 
-function finalize(score: number, name: string, helped: string[], hurt: string[], metrics: string[]): OutdoorScore {
+function finalize(score: number, name: string, helped: string[], hurt: string[], metrics: string[], summary?: string): OutdoorScore {
   const finalScore = clampScore(score);
-  const label = scoreLabel(finalScore);
+  const id = name.toLowerCase().replace(/\s+/g, "-");
+  const label = scoreLabel(finalScore, id);
 
   return {
-    id: name.toLowerCase().replace(/\s+/g, "-"),
+    id,
     name,
     score: finalScore,
     label,
-    summary: `${label} setup for ${name.toLowerCase()} based on temperature, wind, air quality, and rain chances.`,
+    summary: summary ?? `${label} setup for ${name.toLowerCase()} based on temperature, wind, air quality, and rain chances.`,
     helped,
     hurt,
     metrics
   };
+}
+
+function applyRainPenalty(score: number, hurt: string[], rainSignal: ReturnType<typeof analyzeRainSignal>, type: "water" | "field" | "play" | "work") {
+  const reason = "Score lowered because rain is nearby or expected within the next few hours.";
+  let nextScore = score;
+
+  if (rainSignal.currentWet) {
+    nextScore -= type === "play" ? 4 : 3;
+    hurt.push(reason);
+  } else if (rainSignal.nearbyWet || rainSignal.likelyNext3Hours) {
+    nextScore -= type === "play" ? 3 : 2;
+    hurt.push(reason);
+  } else if (rainSignal.laterToday) {
+    nextScore -= type === "water" || type === "field" ? 1 : 0.75;
+    hurt.push("Later-day shower chances add some uncertainty.");
+  }
+
+  if (rainSignal.stormCurrent || rainSignal.stormNext3Hours) {
+    nextScore -= type === "play" || type === "work" ? 4 : 3;
+    hurt.push("Thunder risk is a major outdoor safety concern.");
+  }
+
+  return nextScore;
 }
 
 function buildScores(current: CurrentConditions | null, hourly: HourlyForecastHour[]): OutdoorScore[] {
@@ -90,16 +111,19 @@ function buildScores(current: CurrentConditions | null, hourly: HourlyForecastHo
   const uv = current?.uvIndex ?? nextHour?.uvIndex;
   const aqi = current?.aqi ?? nextHour?.aqi;
   const pm25 = current?.pm25 ?? nextHour?.pm25;
+  const pm10 = current?.pm10 ?? nextHour?.pm10;
   const precip = nextHour?.precipChance;
   const weatherCode = current?.weatherCode ?? nextHour?.weatherCode;
+  const rainSignal = analyzeRainSignal(current, hourly);
   const stormy = isStormCode(weatherCode);
-  const heavyRain = isHeavyRainCode(weatherCode) || (hasNumber(precip) && precip > 70);
+  const heavyRain = isHeavyRainCode(weatherCode) || (hasNumber(precip) && precip > 70) || rainSignal.maxPrecipAmountNext3 >= 0.15;
   const baseMetrics = [
     metric("Temp", hasNumber(temp) ? `${temp}°` : "--"),
     metric("Feels Like", hasNumber(feelsLike) ? `${feelsLike}°` : "--"),
     metric("Wind", hasNumber(wind) ? `${wind} mph` : "--"),
     metric("Gust", hasNumber(gust) ? `${gust} mph` : "--"),
     metric("Rain Chance", hasNumber(precip) ? `${precip}%` : "--"),
+    metric("Max Rain Next 3 Hr", `${rainSignal.maxPrecipChanceNext3}% / ${rainSignal.maxPrecipAmountNext3.toFixed(2)} in`),
     metric("AQI", hasNumber(aqi) ? `${aqi}` : "--"),
     metric("UV", hasNumber(uv) ? `${uv}` : "--")
   ];
@@ -116,8 +140,8 @@ function buildScores(current: CurrentConditions | null, hourly: HourlyForecastHo
     fishingHelped.push("Wind is enough to ripple water without getting rough.");
   }
   if (hasNumber(precip) && precip >= 20 && precip <= 50 && !stormy) {
-    fishing += 1;
-    fishingHelped.push("Moderate rain chance can improve activity without storm risk.");
+    fishing += 0.5;
+    fishingHelped.push("A moderate shower chance can help activity when storms are not involved.");
   }
   if (stormy) {
     fishing -= 2;
@@ -135,6 +159,7 @@ function buildScores(current: CurrentConditions | null, hourly: HourlyForecastHo
     fishing -= 1;
     fishingHurt.push("Heavy rain risk lowers comfort and safety.");
   }
+  fishing = applyRainPenalty(fishing, fishingHurt, rainSignal, "water");
 
   const huntingHelped: string[] = [];
   const huntingHurt: string[] = [];
@@ -167,6 +192,7 @@ function buildScores(current: CurrentConditions | null, hourly: HourlyForecastHo
     hunting -= 1;
     huntingHurt.push("Feels-like temperature is outside the comfortable range.");
   }
+  hunting = applyRainPenalty(hunting, huntingHurt, rainSignal, "field");
 
   const sportsHelped: string[] = [];
   const sportsHurt: string[] = [];
@@ -199,6 +225,7 @@ function buildScores(current: CurrentConditions | null, hourly: HourlyForecastHo
     sports -= 1;
     sportsHurt.push("Rain chance is elevated.");
   }
+  sports = applyRainPenalty(sports, sportsHurt, rainSignal, "play");
 
   const workHelped: string[] = [];
   const workHurt: string[] = [];
@@ -231,12 +258,77 @@ function buildScores(current: CurrentConditions | null, hourly: HourlyForecastHo
     work -= 1;
     workHurt.push("Gusts may affect ladders, equipment, or loose materials.");
   }
+  work = applyRainPenalty(work, workHurt, rainSignal, "work");
+
+  const sneezeHelped: string[] = [];
+  const sneezeHurt: string[] = [];
+  const month = new Date().getMonth() + 1;
+  const spring = month >= 3 && month <= 5;
+  const summer = month >= 6 && month <= 8;
+  const lateSummerFall = month >= 8 && month <= 10;
+  let sneeze = 8;
+
+  if (spring) {
+    sneeze -= 2;
+    sneezeHurt.push("Kentucky spring often brings tree and grass pollen sensitivity.");
+  } else if (summer) {
+    sneeze -= 1;
+    sneezeHurt.push("Kentucky summer can favor grass pollen and mold sensitivity.");
+  } else if (lateSummerFall) {
+    sneeze -= 2;
+    sneezeHurt.push("Late summer and fall can bring ragweed and mold triggers.");
+  } else {
+    sneezeHelped.push("Seasonal pollen pressure is usually lower this time of year.");
+  }
+  if (hasNumber(aqi) && aqi > 100) {
+    sneeze -= 2;
+    sneezeHurt.push("AQI is elevated for sensitive groups.");
+  } else if (hasNumber(aqi) && aqi <= 50) {
+    sneeze += 1;
+    sneezeHelped.push("AQI is in a cleaner range.");
+  }
+  if (hasNumber(pm25) && pm25 > 12) {
+    sneeze -= 2;
+    sneezeHurt.push("PM2.5 may add smoke, haze, or fine particle irritation.");
+  }
+  if (hasNumber(pm10) && pm10 > 54) {
+    sneeze -= 1;
+    sneezeHurt.push("PM10 is elevated enough to irritate allergies.");
+  }
+  if (hasNumber(wind) && wind >= 14 && (!hasNumber(humidity) || humidity < 60)) {
+    sneeze -= 1;
+    sneezeHurt.push("Windy and drier air can spread pollen.");
+  }
+  if ((rainSignal.currentWet || rainSignal.nearbyWet) && (!hasNumber(humidity) || humidity < 80)) {
+    sneeze += 1;
+    sneezeHelped.push("Recent or nearby rain can temporarily wash some pollen down.");
+  }
+  if ((rainSignal.currentWet || rainSignal.laterToday || (hasNumber(humidity) && humidity >= 75)) && (summer || lateSummerFall)) {
+    sneeze -= 1;
+    sneezeHurt.push("Humidity or rain can raise mold sensitivity after wet weather.");
+  }
 
   return [
     finalize(fishing, "Fishing", fishingHelped, fishingHurt, [...baseMetrics, metric("Pressure", hasNumber(pressure) ? `${pressure.toFixed(2)} inHg` : "--")]),
     finalize(hunting, "Hunting", huntingHelped, huntingHurt, [...baseMetrics, metric("Visibility", hasNumber(visibility) ? `${visibility} mi` : "--")]),
     finalize(sports, "Sports Play", sportsHelped, sportsHurt, baseMetrics),
-    finalize(work, "Outdoor Work", workHelped, workHurt, [...baseMetrics, metric("Dew Point", hasNumber(dewpoint) ? `${dewpoint}°` : "--"), metric("PM2.5", hasNumber(pm25) ? `${pm25} ug/m3` : "--")])
+    finalize(work, "Outdoor Work", workHelped, workHurt, [...baseMetrics, metric("Dew Point", hasNumber(dewpoint) ? `${dewpoint}°` : "--"), metric("PM2.5", hasNumber(pm25) ? `${pm25} ug/m3` : "--")]),
+    finalize(
+      sneeze,
+      "Sneeze Score",
+      sneezeHelped,
+      sneezeHurt,
+      [
+        metric("AQI", hasNumber(aqi) ? `${aqi}` : "--"),
+        metric("PM2.5", hasNumber(pm25) ? `${pm25} ug/m3` : "--"),
+        metric("PM10", hasNumber(pm10) ? `${pm10} ug/m3` : "--"),
+        metric("Wind", hasNumber(wind) ? `${wind} mph` : "--"),
+        metric("Humidity", hasNumber(humidity) ? `${humidity}%` : "--"),
+        metric("Rain Signal", rainSignal.currentWet ? "current rain" : rainSignal.nearbyWet ? "nearby rain" : rainSignal.laterToday ? "later rain" : "mostly dry"),
+        metric("Season", spring ? "tree/grass pollen" : summer ? "grass/mold" : lateSummerFall ? "ragweed/mold" : "lower pollen")
+      ],
+      `${scoreLabel(clampScore(sneeze), "sneeze-score")} based on air quality, wind, humidity, rain, and Kentucky seasonal allergy triggers.`
+    )
   ];
 }
 
@@ -244,7 +336,8 @@ const icons = {
   fishing: Fish,
   hunting: Shield,
   "sports-play": Trophy,
-  "outdoor-work": Hammer
+  "outdoor-work": Hammer,
+  "sneeze-score": Flower2
 };
 
 export function OutdoorConditions({ current, hourly }: OutdoorConditionsProps) {

@@ -106,11 +106,13 @@ export function AdminDashboard() {
   const [sponsorPlacements, setSponsorPlacements] = useState<SponsorPlacement[]>([]);
   const [placementForm, setPlacementForm] = useState(emptyPlacement);
   const [selectedPlacementId, setSelectedPlacementId] = useState("");
+  const [isSavingPlacement, setIsSavingPlacement] = useState(false);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [selectedTeamMemberId, setSelectedTeamMemberId] = useState("");
   const [teamMemberForm, setTeamMemberForm] = useState(emptyTeamMember);
   const [teamHeadshotFile, setTeamHeadshotFile] = useState<File | null>(null);
   const [teamHeadshotPreview, setTeamHeadshotPreview] = useState("");
+  const [isSavingTeamMember, setIsSavingTeamMember] = useState(false);
 
   useEffect(() => {
     if (!configured) {
@@ -235,6 +237,7 @@ export function AdminDashboard() {
   async function handlePlacement(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setMessage("");
+    setIsSavingPlacement(true);
 
     try {
       if (!placementForm.sponsorId) {
@@ -253,13 +256,17 @@ export function AdminDashboard() {
       setSelectedPlacementId("");
       setSponsorPlacements(await getSponsorPlacements(false));
     } catch (error) {
+      console.error("Unable to save sponsor placement.", error);
       setMessage(error instanceof Error ? error.message : "Unable to save sponsor placement.");
+    } finally {
+      setIsSavingPlacement(false);
     }
   }
 
   async function handleTeamMember(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setMessage("");
+    setIsSavingTeamMember(true);
 
     try {
       if (teamHeadshotFile && teamHeadshotFile.size > 2_000_000) {
@@ -295,7 +302,10 @@ export function AdminDashboard() {
       setTeamHeadshotPreview("");
       setTeamMembers(await getTeamMembers(false, false));
     } catch (error) {
+      console.error("Unable to save team member.", error);
       setMessage(error instanceof Error ? error.message : "Unable to save team member.");
+    } finally {
+      setIsSavingTeamMember(false);
     }
   }
 
@@ -341,6 +351,16 @@ export function AdminDashboard() {
     });
     setSponsorLogoFile(null);
     setShowSponsorLogoUrl(false);
+  }
+
+  function startSponsorPlacement(sponsor: Sponsor) {
+    setSelectedPlacementId("");
+    setPlacementForm((current) => ({
+      ...current,
+      sponsorId: sponsor.id,
+      enabled: true
+    }));
+    setMessage(`Ready to place ${sponsor.name}. Choose a section and select Add placement.`);
   }
 
   async function deactivateSponsor(sponsor: Sponsor) {
@@ -709,6 +729,9 @@ export function AdminDashboard() {
               <button className="icon-danger" onClick={() => deactivateSponsor(sponsor)} type="button" aria-label={`Deactivate ${sponsor.name}`}>
                 <Trash2 aria-hidden="true" size={16} />
               </button>
+              <button className="button ghost" onClick={() => startSponsorPlacement(sponsor)} type="button">
+                Place sponsor
+              </button>
             </div>
           ))}
         </div>
@@ -795,9 +818,9 @@ export function AdminDashboard() {
             />
           </div>
           <div className="admin-actions">
-            <button className="button" type="submit">
+            <button className="button" disabled={isSavingPlacement || sponsors.length === 0} type="submit">
               {selectedPlacementId ? <Save aria-hidden="true" size={16} /> : <Plus aria-hidden="true" size={16} />}
-              {selectedPlacementId ? "Update placement" : "Add placement"}
+              {isSavingPlacement ? "Saving placement..." : selectedPlacementId ? "Update placement" : "Add placement"}
             </button>
             {selectedPlacementId ? (
               <button
@@ -812,6 +835,7 @@ export function AdminDashboard() {
               </button>
             ) : null}
           </div>
+          {sponsors.length === 0 ? <p className="status-line">Add a sponsor before creating a placement.</p> : null}
         </form>
 
         <div className="panel admin-list">
@@ -909,9 +933,9 @@ export function AdminDashboard() {
             />
           </div>
           <div className="admin-actions">
-            <button className="button" type="submit">
+            <button className="button" disabled={isSavingTeamMember} type="submit">
               {selectedTeamMemberId ? <Save aria-hidden="true" size={16} /> : <Plus aria-hidden="true" size={16} />}
-              {selectedTeamMemberId ? "Update member" : "Add member"}
+              {isSavingTeamMember ? "Saving member..." : selectedTeamMemberId ? "Update member" : "Add member"}
             </button>
             {selectedTeamMemberId ? (
               <button

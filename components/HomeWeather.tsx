@@ -24,6 +24,7 @@ import { OutdoorConditions } from "@/components/OutdoorConditions";
 import { SectionSponsorTag } from "@/components/SectionSponsorTag";
 import { WeatherAlertBanner } from "@/components/WeatherAlertBanner";
 import { getIncomingWeatherAlert } from "@/lib/incomingWeather";
+import { analyzeRainSignal, buildRainAwareInsight, buildRainAwareSnapshotSummary, isStormWeatherCode } from "@/lib/weatherIntelligence";
 import { buildWeatherLocation, readWeatherLocation, saveWeatherLocation } from "@/lib/weatherLocation";
 import type { CurrentConditions, HourlyForecastHour, WeatherAlert } from "@/lib/weather";
 
@@ -156,34 +157,6 @@ function conditionClass(summary = "") {
   return "current-clear";
 }
 
-function buildInsight(current: CurrentConditions | null, hourly: HourlyForecastHour[]) {
-  const nextWetHour = hourly.slice(0, 8).find((hour) => (hour.weatherCode ?? 0) >= 51 || (hour.precipChance ?? 0) >= 45);
-  const temp = current?.temperature;
-  const summary = current?.textDescription?.toLowerCase() ?? "";
-
-  if (nextWetHour?.weatherCode && nextWetHour.weatherCode >= 95) {
-    return "Comfortable conditions for now with storms possible later. Keep an eye on radar.";
-  }
-
-  if (nextWetHour) {
-    return "Quiet right now, but rain chances increase soon around your location.";
-  }
-
-  if (summary.includes("rain")) {
-    return "Rain is nearby. Keep an eye on radar over the next hour.";
-  }
-
-  if (typeof temp === "number" && temp <= 45) {
-    return "Cool and quiet right now with Kentucky weather holding steady nearby.";
-  }
-
-  if (typeof temp === "number" && temp >= 85) {
-    return "Warm conditions are in place. Watch heat, humidity, and afternoon storm chances.";
-  }
-
-  return "Conditions look steady for now, with the next few hours worth watching.";
-}
-
 function describeTemperatureTrend(current: CurrentConditions | null, hourly: HourlyForecastHour[]) {
   const currentTemp = current?.temperature;
   const laterTemp = hourly[3]?.temperature ?? hourly[2]?.temperature;
@@ -206,7 +179,9 @@ function describeTemperatureTrend(current: CurrentConditions | null, hourly: Hou
 }
 
 function buildWeatherSnapshot(current: CurrentConditions | null, hourly: HourlyForecastHour[]) {
-  const nextRainIndex = hourly.slice(0, 6).findIndex((hour) => (hour.precipChance ?? 0) > 30 || (hour.weatherCode ?? 0) >= 51);
+  const rainSignal = analyzeRainSignal(current, hourly);
+  const nextRainIndex =
+    rainSignal.nextWetHourIndex !== null && rainSignal.nextWetHourIndex < 6 ? rainSignal.nextWetHourIndex : -1;
   const nextRain = nextRainIndex >= 0 ? hourly[nextRainIndex] : undefined;
   const maxGust = hourly
     .slice(0, 6)
@@ -214,19 +189,20 @@ function buildWeatherSnapshot(current: CurrentConditions | null, hourly: HourlyF
     .filter((gust): gust is number => typeof gust === "number")
     .reduce((max, gust) => Math.max(max, gust), current?.windGust ?? 0);
   const windDirection = current?.windDirection ? `${current.windDirection} ` : "";
-  const summary =
-    nextRain?.weatherCode && nextRain.weatherCode >= 95
-      ? "Storm chances are the main item to watch."
-      : nextRain
-        ? "Rain chances are the next nearby concern."
-        : "No strong weather signal in the next few hours.";
+  const summary = buildRainAwareSnapshotSummary(rainSignal);
 
   return [
-    nextRain
-      ? nextRainIndex === 0
+    rainSignal.currentWet || rainSignal.nearbyWet
+      ? rainSignal.stormCurrent || rainSignal.stormNext3Hours
+        ? "Storms are nearby or possible soon."
+        : "Rain nearby or already occurring around your location."
+      : nextRain
+        ? nextRainIndex === 0
         ? "Rain or showers are nearby over the next hour."
         : `Rain chance increases in about ${nextRainIndex} hour${nextRainIndex === 1 ? "" : "s"}.`
-      : "No immediate rain signal in the next few hours.",
+        : rainSignal.laterToday
+          ? "Showers possible later today."
+          : "No immediate rain signal in the next few hours.",
     describeTemperatureTrend(current, hourly),
     maxGust > 0 ? `${windDirection}wind gusts may reach ${maxGust} mph.` : "Wind stays light based on the next few hours.",
     summary
@@ -269,13 +245,30 @@ export function HomeWeather({ alerts }: HomeWeatherProps) {
     [activeCounty, alerts]
   );
   const currentVisualClass = conditionClass(currentSummary);
-  const currentInsight = buildInsight(observed, hourlyForecast);
+  const rainSignal = useMemo(() => analyzeRainSignal(observed, hourlyForecast), [observed, hourlyForecast]);
+  const currentInsight = buildRainAwareInsight(observed, hourlyForecast);
   const weatherSnapshot = buildWeatherSnapshot(observed, hourlyForecast);
   const incomingAlert = getIncomingWeatherAlert(locationLabel, observed, hourlyForecast);
 
   useEffect(() => {
     locationLabelRef.current = locationLabel;
   }, [locationLabel]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") {
+      return;
+    }
+
+    console.debug("WNK snapshot intelligence", {
+      selectedLocation: locationLabel,
+      currentCondition: observed?.textDescription,
+      hourlyPrecipProbabilityMax: rainSignal.maxPrecipChanceToday,
+      hourlyPrecipAmountMax: rainSignal.maxPrecipAmountToday,
+      rainNearbyOrCurrent: rainSignal.currentWet || rainSignal.nearbyWet,
+      stormFlag: rainSignal.stormCurrent || rainSignal.stormNext3Hours || hourlyForecast.slice(0, 6).some((hour) => isStormWeatherCode(hour.weatherCode)),
+      finalSnapshotPhrase: weatherSnapshot[0]
+    });
+  }, [hourlyForecast, locationLabel, observed, rainSignal, weatherSnapshot]);
 
   const applyFallbackLocation = useCallback((messageText = "Location unavailable. Showing Louisville, KY.") => {
     requestIdRef.current += 1;
