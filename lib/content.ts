@@ -163,7 +163,7 @@ function mapSponsor(id: string, data: DocumentData): Sponsor {
     name: String(data.name ?? "Sponsor"),
     businessCategory,
     websiteUrl,
-    logoUrl: String(data.logoUrl ?? ""),
+    logoUrl: String(data.logoUrl ?? data.imageUrl ?? ""),
     logoStoragePath: String(data.logoStoragePath ?? ""),
     status: data.status === "inactive" ? "inactive" : "active",
     priority: typeof data.priority === "number" ? data.priority : 0,
@@ -195,15 +195,17 @@ function mapSponsorPlacement(id: string, data: DocumentData): SponsorPlacement {
 }
 
 function mapTeamMember(id: string, data: DocumentData): TeamMember {
+  const order = typeof data.order === "number" ? data.order : typeof data.displayOrder === "number" ? data.displayOrder : 999;
+
   return {
     id,
     name: String(data.name ?? "Team Member"),
     role: String(data.role ?? ""),
     bio: String(data.bio ?? ""),
-    photoUrl: String(data.photoUrl ?? data.imageUrl ?? ""),
+    photoUrl: String(data.headshotUrl ?? data.photoUrl ?? data.imageUrl ?? ""),
     photoStoragePath: String(data.photoStoragePath ?? ""),
     socialUrl: String(data.socialUrl ?? data.linkUrl ?? ""),
-    order: typeof data.order === "number" ? data.order : 999,
+    order,
     status: data.status === "inactive" ? "inactive" : "active",
     createdAtLabel: formatDate(data.createdAt),
     updatedAtLabel: formatDate(data.updatedAt)
@@ -292,6 +294,16 @@ export async function getSponsorPlacements(includeFallback = false): Promise<Spo
   }
 }
 
+export async function getSponsorPlacementsForAdmin(): Promise<SponsorPlacement[]> {
+  if (!isFirebaseConfigured()) {
+    return [];
+  }
+
+  const db = getFirebaseDb();
+  const snapshot = await getDocs(query(collection(db, "sponsorPlacements"), orderBy("sectionKey", "asc")));
+  return snapshot.docs.map((placement) => mapSponsorPlacement(placement.id, placement.data()));
+}
+
 export async function getSponsorPlacementsForSection(sectionKey: string): Promise<SponsorPlacement[]> {
   if (!isFirebaseConfigured()) {
     return [];
@@ -330,6 +342,18 @@ export async function getTeamMembers(includeFallback = true, publicOnly = includ
   }
 }
 
+export async function getTeamMembersForAdmin(): Promise<TeamMember[]> {
+  if (!isFirebaseConfigured()) {
+    return [];
+  }
+
+  const db = getFirebaseDb();
+  const snapshot = await getDocs(query(collection(db, "teamMembers"), orderBy("order", "asc")));
+  return snapshot.docs
+    .map((member) => mapTeamMember(member.id, member.data()))
+    .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
+}
+
 export async function saveSiteSettings(settings: SiteSettings) {
   const db = getFirebaseDb();
   await setDoc(doc(db, "settings", "site"), settings, { merge: true });
@@ -360,6 +384,11 @@ export async function saveSponsor(sponsor: Omit<Sponsor, "id" | "description" | 
     updatedAt: serverTimestamp()
   });
   return created.id;
+}
+
+export function createTeamMemberId() {
+  const db = getFirebaseDb();
+  return doc(collection(db, "teamMembers")).id;
 }
 
 export async function updateSponsor(id: string, sponsor: Omit<Sponsor, "id" | "description" | "url" | "createdAtLabel" | "updatedAtLabel">) {
@@ -397,6 +426,7 @@ export async function saveTeamMember(member: Omit<TeamMember, "id" | "createdAtL
   contentDebug("Firestore saveTeamMember payload", member);
   const created = await addDoc(collection(db, "teamMembers"), {
     ...member,
+    displayOrder: member.order,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp()
   });
@@ -407,11 +437,18 @@ export async function saveTeamMember(member: Omit<TeamMember, "id" | "createdAtL
 export async function updateTeamMember(id: string, member: Omit<TeamMember, "id" | "createdAtLabel" | "updatedAtLabel">) {
   const db = getFirebaseDb();
   contentDebug("Firestore updateTeamMember payload", { id, member });
-  await updateDoc(doc(db, "teamMembers", id), {
+  await setDoc(doc(db, "teamMembers", id), {
     ...member,
+    headshotUrl: member.photoUrl,
+    displayOrder: member.order,
     updatedAt: serverTimestamp()
-  });
+  }, { merge: true });
   contentDebug("Firestore updateTeamMember response", { id });
+}
+
+export async function deleteSponsorPlacement(id: string) {
+  const db = getFirebaseDb();
+  await deleteDoc(doc(db, "sponsorPlacements", id));
 }
 
 export async function deleteTeamMember(id: string) {

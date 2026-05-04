@@ -6,12 +6,16 @@ import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { Edit3, LogIn, LogOut, Plus, Save, Trash2 } from "lucide-react";
 import { getFirebaseServices, getFirebaseStorage, isFirebaseConfigured } from "@/lib/firebase";
 import {
+  createTeamMemberId,
+  deleteSponsorPlacement,
   deleteTeamMember,
   getBlogPosts,
   getSiteSettings,
   getSponsorPlacements,
+  getSponsorPlacementsForAdmin,
   getSponsors,
   getTeamMembers,
+  getTeamMembersForAdmin,
   saveBlogPost,
   saveSiteSettings,
   saveSponsor,
@@ -114,6 +118,7 @@ export function AdminDashboard() {
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [actionDebug, setActionDebug] = useState("");
+  const [actionDebugLog, setActionDebugLog] = useState<string[]>([]);
   const [settings, setSettings] = useState<SiteSettings>({ forecastOverride: "", isLive: false, youtubeVideoId: "" });
   const [posts, setPosts] = useState<BlogPost[]>([]);
   const [selectedPostId, setSelectedPostId] = useState("");
@@ -134,8 +139,26 @@ export function AdminDashboard() {
   const [teamHeadshotPreview, setTeamHeadshotPreview] = useState("");
   const [isSavingTeamMember, setIsSavingTeamMember] = useState(false);
 
+  function formatDebugPayload(payload?: unknown) {
+    if (payload === undefined) {
+      return "";
+    }
+
+    if (payload instanceof Error) {
+      return ` - ${payload.name}: ${payload.message}`;
+    }
+
+    try {
+      return ` - ${JSON.stringify(payload)}`;
+    } catch {
+      return ` - ${String(payload)}`;
+    }
+  }
+
   function debugAction(text: string, payload?: unknown) {
-    setActionDebug(text);
+    const line = `${new Date().toLocaleTimeString()} - ${text}${formatDebugPayload(payload)}`;
+    setActionDebug(line);
+    setActionDebugLog((current) => [line, ...current].slice(0, 12));
     adminDebug(text, payload);
   }
 
@@ -238,8 +261,14 @@ export function AdminDashboard() {
         const extension = sponsorLogoFile.name.split(".").pop()?.toLowerCase() || "png";
         logoStoragePath = `sponsors/${sponsorId}/logo.${extension}`;
         const logoRef = ref(getFirebaseStorage(), logoStoragePath);
-        await uploadBytes(logoRef, sponsorLogoFile, { contentType: sponsorLogoFile.type });
-        logoUrl = await getDownloadURL(logoRef);
+        try {
+          await uploadBytes(logoRef, sponsorLogoFile, { contentType: sponsorLogoFile.type });
+          logoUrl = await getDownloadURL(logoRef);
+          debugAction("Sponsor logo upload success", { sponsorId, logoUrl, logoStoragePath });
+        } catch (uploadError) {
+          debugAction("Sponsor logo upload error", uploadError);
+          throw uploadError;
+        }
       }
 
       await updateSponsor(sponsorId, {
@@ -248,7 +277,7 @@ export function AdminDashboard() {
         logoStoragePath
       });
 
-      setMessage(selectedSponsorId ? "Sponsor updated." : "Sponsor added.");
+      setMessage(`${selectedSponsorId ? "Sponsor updated" : "Sponsor added"}. Document ID: ${sponsorId}. Logo URL: ${logoUrl || "none"}.`);
       setSponsorForm(emptySponsor);
       setSelectedSponsorId("");
       setSponsorLogoFile(null);
@@ -275,6 +304,11 @@ export function AdminDashboard() {
         priority: Number.isFinite(placementForm.priority) ? placementForm.priority : 0
       };
 
+      debugAction("Add Placement payload built", {
+        collectionPath: "sponsorPlacements",
+        payload: placementPayload
+      });
+
       debugAction("Add Placement validation started", {
         selectedPlacementId,
         placementPayload,
@@ -298,17 +332,39 @@ export function AdminDashboard() {
         await updateSponsorPlacement(selectedPlacementId, placementPayload);
         debugAction("Firebase placement update success", { id: selectedPlacementId });
         setMessage("Sponsor placement updated.");
+        setSponsorPlacements((current) =>
+          current.map((placement) =>
+            placement.id === selectedPlacementId
+              ? {
+                  id: selectedPlacementId,
+                  ...placementPayload
+                }
+              : placement
+          )
+        );
+        debugAction("Final local placement state updated", { id: selectedPlacementId, mode: "updated" });
       } else {
         debugAction("Firebase placement write started", placementPayload);
         const createdId = await saveSponsorPlacement(placementPayload);
         debugAction("Firebase placement write success", { id: createdId });
         setMessage("Sponsor placement added.");
+        setSponsorPlacements((current) => [
+          ...current,
+          {
+            id: createdId,
+            ...placementPayload
+          }
+        ]);
+        debugAction("Final local placement state updated", { id: createdId, mode: "appended" });
       }
 
       setPlacementForm(emptyPlacement);
       setSelectedPlacementId("");
       try {
-        setSponsorPlacements(await getSponsorPlacements(false));
+        debugAction("Firebase placement refresh started", { collectionPath: "sponsorPlacements" });
+        const refreshedPlacements = await getSponsorPlacementsForAdmin();
+        setSponsorPlacements(refreshedPlacements);
+        debugAction("Firebase placement refresh success", { count: refreshedPlacements.length });
       } catch (refreshError) {
         console.error("Sponsor placement saved, but refresh failed.", refreshError);
         debugAction("Firebase placement refresh error", refreshError);
@@ -349,6 +405,14 @@ export function AdminDashboard() {
         order: Number.isFinite(teamMemberForm.order) ? teamMemberForm.order : 0
       };
 
+      debugAction("Add Member payload built", {
+        collectionPath: "teamMembers",
+        payload: {
+          ...memberPayload,
+          displayOrder: memberPayload.order
+        }
+      });
+
       debugAction("Add Member validation started", {
         selectedTeamMemberId,
         memberPayload,
@@ -377,34 +441,56 @@ export function AdminDashboard() {
       let teamMemberId = selectedTeamMemberId;
 
       if (!teamMemberId) {
-        debugAction("Firebase team member write started", memberPayload);
-        teamMemberId = await saveTeamMember(memberPayload);
-        debugAction("Firebase team member write success", { id: teamMemberId });
+        teamMemberId = createTeamMemberId();
+        debugAction("Firebase team member ID prepared", { id: teamMemberId });
       }
 
       if (teamHeadshotFile) {
         const extension = teamHeadshotFile.name.split(".").pop()?.toLowerCase() || "jpg";
         photoStoragePath = `teamMembers/${teamMemberId}/headshot.${extension}`;
         const headshotRef = ref(getFirebaseStorage(), photoStoragePath);
-        await uploadBytes(headshotRef, teamHeadshotFile, { contentType: teamHeadshotFile.type });
-        photoUrl = await getDownloadURL(headshotRef);
+        try {
+          await uploadBytes(headshotRef, teamHeadshotFile, { contentType: teamHeadshotFile.type });
+          photoUrl = await getDownloadURL(headshotRef);
+          debugAction("Team headshot upload success", { id: teamMemberId, headshotUrl: photoUrl, photoStoragePath });
+        } catch (uploadError) {
+          debugAction("Team headshot upload error", uploadError);
+          throw uploadError;
+        }
       }
 
-      debugAction("Firebase team member update started", { id: teamMemberId, memberPayload });
+      debugAction("Firebase team member write started", { id: teamMemberId, memberPayload, headshotUrl: photoUrl });
       await updateTeamMember(teamMemberId, {
         ...memberPayload,
         photoUrl,
         photoStoragePath
       });
-      debugAction("Firebase team member update success", { id: teamMemberId });
+      debugAction("Firebase team member write success", { id: teamMemberId, headshotUrl: photoUrl });
 
-      setMessage(selectedTeamMemberId ? "Team member updated." : "Team member added.");
+      setMessage(
+        `${selectedTeamMemberId ? "Team member updated" : "Team member added"}. Document ID: ${teamMemberId}. Headshot URL: ${photoUrl || "none"}.`
+      );
+      const savedMember = {
+        id: teamMemberId,
+        ...memberPayload,
+        photoUrl,
+        photoStoragePath
+      };
+      setTeamMembers((current) =>
+        selectedTeamMemberId
+          ? current.map((member) => (member.id === teamMemberId ? savedMember : member))
+          : [...current, savedMember].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name))
+      );
+      debugAction("Final local team member state updated", { id: teamMemberId, mode: selectedTeamMemberId ? "updated" : "appended" });
       setTeamMemberForm(emptyTeamMember);
       setSelectedTeamMemberId("");
       setTeamHeadshotFile(null);
       setTeamHeadshotPreview("");
       try {
-        setTeamMembers(await getTeamMembers(false, false));
+        debugAction("Firebase team member refresh started", { collectionPath: "teamMembers" });
+        const refreshedMembers = await getTeamMembersForAdmin();
+        setTeamMembers(refreshedMembers);
+        debugAction("Firebase team member refresh success", { count: refreshedMembers.length });
       } catch (refreshError) {
         console.error("Team member saved, but refresh failed.", refreshError);
         debugAction("Firebase team member refresh error", refreshError);
@@ -535,6 +621,41 @@ export function AdminDashboard() {
     });
   }
 
+  async function removeSponsorPlacement() {
+    if (!selectedPlacementId) {
+      setMessage("Choose a sponsor placement to remove.");
+      return;
+    }
+
+    const shouldRemove = window.confirm("Remove this sponsor placement?");
+
+    if (!shouldRemove) {
+      return;
+    }
+
+    try {
+      debugAction("Firebase placement delete started", { id: selectedPlacementId });
+      await deleteSponsorPlacement(selectedPlacementId);
+      debugAction("Firebase placement delete success", { id: selectedPlacementId });
+      setSponsorPlacements((current) => current.filter((placement) => placement.id !== selectedPlacementId));
+      setSelectedPlacementId("");
+      setPlacementForm(emptyPlacement);
+      setMessage("Sponsor placement removed.");
+
+      try {
+        const refreshedPlacements = await getSponsorPlacementsForAdmin();
+        setSponsorPlacements(refreshedPlacements);
+      } catch (refreshError) {
+        console.error("Sponsor placement removed, but refresh failed.", refreshError);
+        debugAction("Firebase placement refresh error", refreshError);
+      }
+    } catch (error) {
+      console.error("Unable to remove sponsor placement.", error);
+      debugAction("Firebase placement delete error", error);
+      setMessage(error instanceof Error ? error.message : "Unable to remove sponsor placement.");
+    }
+  }
+
   async function removeTeamMember(member: TeamMember) {
     const shouldRemove = window.confirm(`Remove ${member.name} from the team page?`);
 
@@ -611,6 +732,16 @@ export function AdminDashboard() {
         <p className="panel status-line" data-admin-debug="true">
           Debug: {actionDebug}
         </p>
+      ) : null}
+      {actionDebugLog.length ? (
+        <div className="panel status-line" data-admin-debug-log="true">
+          <strong>Admin action trace</strong>
+          <ol>
+            {actionDebugLog.map((entry) => (
+              <li key={entry}>{entry}</li>
+            ))}
+          </ol>
+        </div>
       ) : null}
 
       <form className="panel admin-form" onSubmit={handleSettings}>
@@ -959,16 +1090,22 @@ export function AdminDashboard() {
               {isSavingPlacement ? "Saving placement..." : selectedPlacementId ? "Update placement" : "Add placement"}
             </button>
             {selectedPlacementId ? (
-              <button
-                className="button ghost"
-                onClick={() => {
-                  setSelectedPlacementId("");
-                  setPlacementForm(emptyPlacement);
-                }}
-                type="button"
-              >
-                Cancel
-              </button>
+              <>
+                <button className="button ghost" onClick={() => void removeSponsorPlacement()} type="button">
+                  <Trash2 aria-hidden="true" size={16} />
+                  Remove placement
+                </button>
+                <button
+                  className="button ghost"
+                  onClick={() => {
+                    setSelectedPlacementId("");
+                    setPlacementForm(emptyPlacement);
+                  }}
+                  type="button"
+                >
+                  Cancel
+                </button>
+              </>
             ) : null}
           </div>
           {sponsors.length === 0 ? <p className="status-line">Add a sponsor before creating a placement.</p> : null}
