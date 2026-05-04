@@ -3,6 +3,7 @@
 import { Maximize2, X } from "lucide-react";
 import type { FormEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
+import { buildWeatherLocation, readWeatherLocation, saveWeatherLocation } from "@/lib/weatherLocation";
 
 type RadarCenter = {
   lat: number;
@@ -71,6 +72,23 @@ export function RadarTabs() {
   const selectedRadarTitle = activeTab === "live" ? "WeatherWise live radar for Kentucky" : "WeatherWise HRRR future radar for Kentucky";
 
   useEffect(() => {
+    const saved = readWeatherLocation();
+
+    if (!saved) {
+      return;
+    }
+
+    setCenter({
+      lat: saved.latitude,
+      lon: saved.longitude,
+      label: saved.displayName,
+      zoom: selectedLocationZoom
+    });
+    setLocationQuery(saved.query ?? "");
+    setLocationStatus(`Using saved location: ${saved.displayName}.`);
+  }, []);
+
+  useEffect(() => {
     if (!isExpanded) {
       return;
     }
@@ -90,9 +108,18 @@ export function RadarTabs() {
     };
   }, [isExpanded]);
 
-  function updateRadarCenter(lat: number, lon: number, label: string) {
+  function updateRadarCenter(lat: number, lon: number, label: string, source: "detected" | "searched", query?: string) {
     setCenter({ lat, lon, label, zoom: selectedLocationZoom });
     setLocationStatus(`Radar centered on ${label}.`);
+    saveWeatherLocation(
+      buildWeatherLocation({
+        displayName: label,
+        latitude: lat,
+        longitude: lon,
+        source,
+        query
+      })
+    );
   }
 
   function handleUseMyLocation() {
@@ -106,7 +133,7 @@ export function RadarTabs() {
 
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        updateRadarCenter(position.coords.latitude, position.coords.longitude, "your location");
+        updateRadarCenter(position.coords.latitude, position.coords.longitude, "Detected Location", "detected");
         setIsLocating(false);
       },
       () => {
@@ -141,7 +168,7 @@ export function RadarTabs() {
         throw new Error(data.error ?? "Unable to find that location.");
       }
 
-      updateRadarCenter(data.lat, data.lon, data.label ?? query);
+      updateRadarCenter(data.lat, data.lon, data.label ?? query, "searched", query);
     } catch (error) {
       setLocationStatus(error instanceof Error ? error.message : "Unable to center radar on that location.");
     } finally {

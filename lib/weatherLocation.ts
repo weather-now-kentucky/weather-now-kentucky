@@ -10,6 +10,7 @@ export type WeatherLocation = {
   displayName: string;
   latitude: number;
   longitude: number;
+  timezone?: string;
   source: WeatherLocationSource;
   updatedAt: string;
   query?: string;
@@ -27,6 +28,7 @@ export function buildWeatherLocation(input: {
   displayName: string;
   latitude: number;
   longitude: number;
+  timezone?: string;
   source: WeatherLocationSource;
   query?: string;
   countyLabel?: string;
@@ -39,6 +41,7 @@ export function buildWeatherLocation(input: {
     displayName: input.displayName,
     latitude: input.latitude,
     longitude: input.longitude,
+    timezone: input.timezone,
     source: input.source,
     updatedAt: new Date().toISOString(),
     query: input.query,
@@ -62,7 +65,7 @@ export function isWeatherLocation(value: unknown): value is WeatherLocation {
 
 export function readWeatherLocation() {
   try {
-    const saved = sessionStorage.getItem(weatherLocationKey);
+    const saved = localStorage.getItem(weatherLocationKey);
     const parsed = saved ? JSON.parse(saved) : null;
 
     if (isWeatherLocation(parsed)) {
@@ -70,21 +73,21 @@ export function readWeatherLocation() {
     }
 
     if (saved) {
-      sessionStorage.removeItem(weatherLocationKey);
+      localStorage.removeItem(weatherLocationKey);
     }
   } catch {
-    sessionStorage.removeItem(weatherLocationKey);
+    localStorage.removeItem(weatherLocationKey);
   }
 
   return null;
 }
 
 export function saveWeatherLocation(location: WeatherLocation) {
-  sessionStorage.setItem(weatherLocationKey, JSON.stringify(location));
+  localStorage.setItem(weatherLocationKey, JSON.stringify(location));
 }
 
 export function clearWeatherLocation() {
-  sessionStorage.removeItem(weatherLocationKey);
+  localStorage.removeItem(weatherLocationKey);
 }
 
 export function useWeatherLocation() {

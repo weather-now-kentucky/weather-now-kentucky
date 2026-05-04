@@ -43,6 +43,14 @@ export default async function RootLayout({ children }: { children: React.ReactNo
 
   return (
     <html lang="en">
+      <head>
+        <link href="/manifest.json" rel="manifest" />
+        <meta content="#07111f" name="theme-color" />
+        <link href="/icons/icon-192.png" rel="apple-touch-icon" />
+        <meta content="yes" name="apple-mobile-web-app-capable" />
+        <meta content="WNK Weather" name="apple-mobile-web-app-title" />
+        <meta content="black-translucent" name="apple-mobile-web-app-status-bar-style" />
+      </head>
       <body>
         <div className={severeMode ? "site-shell severe-mode" : "site-shell"}>
           <LiveNowBanner isLive={settings.isLive} />
@@ -58,14 +66,16 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                   </span>
                 </Link>
               </div>
-              <nav aria-label="Main navigation" className="nav">
-                {navItems.map((item) => (
-                  <Link href={item.href} key={item.href}>
-                    {item.label}
-                  </Link>
-                ))}
-                <ThemeToggle />
-              </nav>
+              <div className="nav-wrap">
+                <nav aria-label="Main navigation" className="nav">
+                  {navItems.map((item) => (
+                    <Link href={item.href} key={item.href}>
+                      {item.label}
+                    </Link>
+                  ))}
+                  <ThemeToggle />
+                </nav>
+              </div>
             </div>
           </header>
           <main className="main">{children}</main>

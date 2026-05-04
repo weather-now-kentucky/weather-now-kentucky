@@ -76,23 +76,36 @@ function finalize(score: number, name: string, helped: string[], hurt: string[],
 }
 
 function applyRainPenalty(score: number, hurt: string[], rainSignal: ReturnType<typeof analyzeRainSignal>, type: "water" | "field" | "play" | "work") {
-  const reason = "Score lowered because rain is nearby or expected within the next few hours.";
   let nextScore = score;
 
-  if (rainSignal.currentWet) {
-    nextScore -= type === "play" ? 4 : 3;
-    hurt.push(reason);
-  } else if (rainSignal.nearbyWet || rainSignal.likelyNext3Hours) {
-    nextScore -= type === "play" ? 3 : 2;
-    hurt.push(reason);
-  } else if (rainSignal.laterToday) {
-    nextScore -= type === "water" || type === "field" ? 1 : 0.75;
-    hurt.push("Later-day shower chances add some uncertainty.");
+  if (type === "play" && rainSignal.lightningWithin20Miles) {
+    hurt.push("Sports play is not recommended with lightning within 20 miles.");
+    return 1;
   }
 
-  if (rainSignal.stormCurrent || rainSignal.stormNext3Hours) {
-    nextScore -= type === "play" || type === "work" ? 4 : 3;
-    hurt.push("Thunder risk is a major outdoor safety concern.");
+  if (rainSignal.currentWet) {
+    nextScore -= type === "play" ? 4 : type === "work" ? 3 : 3;
+    hurt.push("Lowered because rain is occurring at your location.");
+  } else if (rainSignal.nearbyWet || rainSignal.likelyNextHour) {
+    nextScore -= type === "play" ? 3 : 2.5;
+    hurt.push("Lowered because rain is nearby.");
+  } else if (rainSignal.likelyNext3Hours) {
+    nextScore -= type === "play" ? 3 : 2;
+    hurt.push("Lowered because showers are expected within the next few hours.");
+  } else if (rainSignal.likely3To6Hours) {
+    nextScore -= type === "play" ? 1.5 : 1;
+    hurt.push("Lowered because rain may arrive later in the next several hours.");
+  } else if (rainSignal.laterToday) {
+    nextScore -= type === "water" || type === "field" ? 1 : 0.5;
+    hurt.push("Light later-day shower chances add some uncertainty.");
+  }
+
+  if (rainSignal.stormCurrent || rainSignal.stormNextHour || rainSignal.stormNext3Hours) {
+    nextScore -= type === "play" ? 5 : type === "work" ? 4 : 3.5;
+    hurt.push("Storm risk nearby makes outdoor plans less favorable.");
+  } else if (rainSignal.storm3To6Hours) {
+    nextScore -= type === "play" ? 3 : 2;
+    hurt.push("Storms are possible later in the next several hours.");
   }
 
   return nextScore;
@@ -124,6 +137,7 @@ function buildScores(current: CurrentConditions | null, hourly: HourlyForecastHo
     metric("Gust", hasNumber(gust) ? `${gust} mph` : "--"),
     metric("Rain Chance", hasNumber(precip) ? `${precip}%` : "--"),
     metric("Max Rain Next 3 Hr", `${rainSignal.maxPrecipChanceNext3}% / ${rainSignal.maxPrecipAmountNext3.toFixed(2)} in`),
+    metric("Max Rain Next 6 Hr", `${rainSignal.maxPrecipChanceNext6}% / ${rainSignal.maxPrecipAmountNext6.toFixed(2)} in`),
     metric("AQI", hasNumber(aqi) ? `${aqi}` : "--"),
     metric("UV", hasNumber(uv) ? `${uv}` : "--")
   ];

@@ -25,7 +25,7 @@ import { SectionSponsorTag } from "@/components/SectionSponsorTag";
 import { WeatherAlertBanner } from "@/components/WeatherAlertBanner";
 import { getIncomingWeatherAlert } from "@/lib/incomingWeather";
 import { analyzeRainSignal, buildRainAwareInsight, buildRainAwareSnapshotSummary, isStormWeatherCode } from "@/lib/weatherIntelligence";
-import { buildWeatherLocation, readWeatherLocation, saveWeatherLocation } from "@/lib/weatherLocation";
+import { buildWeatherLocation, clearWeatherLocation, readWeatherLocation, saveWeatherLocation } from "@/lib/weatherLocation";
 import type { CurrentConditions, HourlyForecastHour, WeatherAlert } from "@/lib/weather";
 
 type LocationSource = "detected" | "default" | "searched";
@@ -85,6 +85,7 @@ type CurrentApiResponse = {
   hourly?: HourlyForecastHour[];
   locationLabel?: string;
   countyLabel?: string;
+  timezone?: string;
   error?: string;
 };
 
@@ -178,8 +179,7 @@ function describeTemperatureTrend(current: CurrentConditions | null, hourly: Hou
   return `Temps holding near ${currentTemp}\u00b0 for the next few hours.`;
 }
 
-function buildWeatherSnapshot(current: CurrentConditions | null, hourly: HourlyForecastHour[]) {
-  const rainSignal = analyzeRainSignal(current, hourly);
+function buildWeatherSnapshot(current: CurrentConditions | null, hourly: HourlyForecastHour[], rainSignal = analyzeRainSignal(current, hourly)) {
   const nextRainIndex =
     rainSignal.nextWetHourIndex !== null && rainSignal.nextWetHourIndex < 6 ? rainSignal.nextWetHourIndex : -1;
   const nextRain = nextRainIndex >= 0 ? hourly[nextRainIndex] : undefined;
@@ -193,16 +193,24 @@ function buildWeatherSnapshot(current: CurrentConditions | null, hourly: HourlyF
 
   return [
     rainSignal.currentWet || rainSignal.nearbyWet
-      ? rainSignal.stormCurrent || rainSignal.stormNext3Hours
+      ? rainSignal.lightningWithin20Miles
+        ? "Lightning is close enough to avoid outdoor plans."
+        : rainSignal.stormCurrent || rainSignal.stormNextHour || rainSignal.stormNext3Hours
         ? "Storms are nearby or possible soon."
-        : "Rain nearby or already occurring around your location."
+        : "Rain is nearby with showers possible shortly."
       : nextRain
-        ? nextRainIndex === 0
+        ? rainSignal.likelyNextHour || nextRainIndex === 0
         ? "Rain or showers are nearby over the next hour."
-        : `Rain chance increases in about ${nextRainIndex} hour${nextRainIndex === 1 ? "" : "s"}.`
+        : rainSignal.likelyNext3Hours
+          ? "Dry now, but rain may move in over the next few hours."
+          : `Rain chance increases in about ${nextRainIndex} hour${nextRainIndex === 1 ? "" : "s"}.`
+        : rainSignal.likely3To6Hours || rainSignal.storm3To6Hours
+          ? rainSignal.storm3To6Hours
+            ? "Storms are possible later, so keep an eye on radar."
+            : "Showers may move in later in the next several hours."
         : rainSignal.laterToday
-          ? "Showers possible later today."
-          : "No immediate rain signal in the next few hours.",
+          ? "Periods of rain are possible today."
+          : "Quiet right now, with mostly dry conditions expected.",
     describeTemperatureTrend(current, hourly),
     maxGust > 0 ? `${windDirection}wind gusts may reach ${maxGust} mph.` : "Wind stays light based on the next few hours.",
     summary
@@ -220,7 +228,10 @@ export function HomeWeather({ alerts }: HomeWeatherProps) {
   const [isSearching, setIsSearching] = useState(false);
   const [message, setMessage] = useState("Loading your saved forecast location...");
   const [searchQuery, setSearchQuery] = useState("");
+  const [snapshotExpanded, setSnapshotExpanded] = useState(false);
+  const [hasSavedLocation, setHasSavedLocation] = useState(false);
   const locationLabelRef = useRef(locationLabel);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const requestIdRef = useRef(0);
 
   const observed = currentConditions;
@@ -247,8 +258,10 @@ export function HomeWeather({ alerts }: HomeWeatherProps) {
   const currentVisualClass = conditionClass(currentSummary);
   const rainSignal = useMemo(() => analyzeRainSignal(observed, hourlyForecast), [observed, hourlyForecast]);
   const currentInsight = buildRainAwareInsight(observed, hourlyForecast);
-  const weatherSnapshot = buildWeatherSnapshot(observed, hourlyForecast);
+  const weatherSnapshot = useMemo(() => buildWeatherSnapshot(observed, hourlyForecast, rainSignal), [observed, hourlyForecast, rainSignal]);
   const incomingAlert = getIncomingWeatherAlert(locationLabel, observed, hourlyForecast);
+  const hasSnapshotExtras = weatherSnapshot.length > 3;
+  const savedLocationMessage = hasSavedLocation && locationLabel !== "Loading location..." ? `Using saved location: ${locationLabel}` : "";
 
   useEffect(() => {
     locationLabelRef.current = locationLabel;
@@ -261,14 +274,21 @@ export function HomeWeather({ alerts }: HomeWeatherProps) {
 
     console.debug("WNK snapshot intelligence", {
       selectedLocation: locationLabel,
+      selectedLatLon: location ? { lat: location.lat, lon: location.lon } : null,
+      currentPrecipFlag: rainSignal.currentWet,
       currentCondition: observed?.textDescription,
-      hourlyPrecipProbabilityMax: rainSignal.maxPrecipChanceToday,
-      hourlyPrecipAmountMax: rainSignal.maxPrecipAmountToday,
+      currentWeatherCode: observed?.weatherCode,
+      maxPopNext3Hours: rainSignal.maxPrecipChanceNext3,
+      maxPrecipAmountNext3Hours: rainSignal.maxPrecipAmountNext3,
+      maxPopNext6Hours: rainSignal.maxPrecipChanceNext6,
+      maxPrecipAmountNext6Hours: rainSignal.maxPrecipAmountNext6,
       rainNearbyOrCurrent: rainSignal.currentWet || rainSignal.nearbyWet,
-      stormFlag: rainSignal.stormCurrent || rainSignal.stormNext3Hours || hourlyForecast.slice(0, 6).some((hour) => isStormWeatherCode(hour.weatherCode)),
+      rainNearbyFlag: rainSignal.nearbyWet,
+      thunderStormFlag: rainSignal.stormCurrent || rainSignal.stormNext3Hours || rainSignal.storm3To6Hours || hourlyForecast.slice(0, 6).some((hour) => isStormWeatherCode(hour.weatherCode)),
+      lightningWithin20Miles: rainSignal.lightningWithin20Miles,
       finalSnapshotPhrase: weatherSnapshot[0]
     });
-  }, [hourlyForecast, locationLabel, observed, rainSignal, weatherSnapshot]);
+  }, [hourlyForecast, location, locationLabel, observed, rainSignal, weatherSnapshot]);
 
   const applyFallbackLocation = useCallback((messageText = "Location unavailable. Showing Louisville, KY.") => {
     requestIdRef.current += 1;
@@ -313,6 +333,7 @@ export function HomeWeather({ alerts }: HomeWeatherProps) {
           source: "detected"
         });
         saveWeatherLocation(nextLocation);
+        setHasSavedLocation(true);
         setLocation({
           lat: position.coords.latitude,
           lon: position.coords.longitude,
@@ -347,6 +368,7 @@ export function HomeWeather({ alerts }: HomeWeatherProps) {
 
     if (saved) {
       requestIdRef.current += 1;
+      setHasSavedLocation(true);
       setSearchQuery(saved.query ?? "");
       setLocationLabel(saved.displayName);
       setActiveCounty(saved.countyLabel ?? null);
@@ -406,18 +428,34 @@ export function HomeWeather({ alerts }: HomeWeatherProps) {
           setHourlyForecast(data.hourly ?? []);
           setActiveCounty((currentCounty) => data.countyLabel ?? currentCounty);
 
+          if (debouncedLocation.source !== "default") {
+            saveWeatherLocation(
+              buildWeatherLocation({
+                displayName: data.locationLabel ?? locationLabelRef.current,
+                latitude: debouncedLocation.lat,
+                longitude: debouncedLocation.lon,
+                source: debouncedLocation.source,
+                timezone: data.timezone,
+                countyLabel: data.countyLabel
+              })
+            );
+            setHasSavedLocation(true);
+          }
+
           if (debouncedLocation.source === "detected") {
             if (data.locationLabel) {
               setLocationLabel(data.locationLabel);
-              saveWeatherLocation(
+            saveWeatherLocation(
                 buildWeatherLocation({
                   displayName: data.locationLabel,
                   latitude: debouncedLocation.lat,
                   longitude: debouncedLocation.lon,
                   source: "detected",
+                  timezone: data.timezone,
                   countyLabel: data.countyLabel
                 })
               );
+              setHasSavedLocation(true);
               setMessage("Using your current location");
             } else {
               setLocationLabel("Detected Location");
@@ -482,6 +520,7 @@ export function HomeWeather({ alerts }: HomeWeatherProps) {
           countyLabel: data.countyLabel
         })
       );
+      setHasSavedLocation(true);
       setCurrentConditions(null);
       setHourlyForecast([]);
       setLocationLabel(label);
@@ -501,10 +540,32 @@ export function HomeWeather({ alerts }: HomeWeatherProps) {
     }
   }
 
+  function handleChangeSavedLocation() {
+    searchInputRef.current?.focus();
+  }
+
+  function handleClearSavedLocation() {
+    clearWeatherLocation();
+    setHasSavedLocation(false);
+    setSearchQuery("");
+    applyFallbackLocation("Saved location cleared. Showing Louisville, KY.");
+  }
+
   return (
     <section className="home-weather">
       <WeatherAlertBanner alerts={locationAlerts} />
       <section className="location-control">
+        {savedLocationMessage ? (
+          <div className="saved-location-row">
+            <span>{savedLocationMessage}</span>
+            <button onClick={handleChangeSavedLocation} type="button">
+              Change
+            </button>
+            <button onClick={handleClearSavedLocation} type="button">
+              Clear saved location
+            </button>
+          </div>
+        ) : null}
         <form className="location-search" onSubmit={handleLocationSearch}>
           <label htmlFor="locationSearch">Enter city, state or ZIP code</label>
           <div className="location-search-row">
@@ -512,6 +573,7 @@ export function HomeWeather({ alerts }: HomeWeatherProps) {
               id="locationSearch"
               onChange={(event) => setSearchQuery(event.target.value)}
               placeholder="Elizabethtown, KY"
+              ref={searchInputRef}
               type="text"
               value={searchQuery}
             />
@@ -525,6 +587,15 @@ export function HomeWeather({ alerts }: HomeWeatherProps) {
         </form>
         <p className="location-note">{message}</p>
       </section>
+      {incomingAlert.show ? (
+        <div className={`mobile-rain-callout mobile-rain-${incomingAlert.urgency}`}>
+          <strong>
+            {incomingAlert.type === "storm" ? "Storms nearby" : incomingAlert.type === "snow" ? "Snow nearby" : "Rain nearby"}
+          </strong>
+          <span>{incomingAlert.message}</span>
+          <Link href="/radar">Open Radar</Link>
+        </div>
+      ) : null}
       <section className={`current-conditions ${currentVisualClass}`}>
         <div className="current-primary">
           <div className="section-title-row">
@@ -543,14 +614,22 @@ export function HomeWeather({ alerts }: HomeWeatherProps) {
           <p className="current-insight">{currentInsight}</p>
           <div className="weather-snapshot">
             <span>Today&apos;s Snapshot</span>
-            <ul>
-              {weatherSnapshot.map((item) => (
-                <li key={item}>{item}</li>
+            <ul className={snapshotExpanded ? "snapshot-expanded" : ""}>
+              {weatherSnapshot.map((item, index) => (
+                <li className={index >= 3 ? "snapshot-extra" : ""} key={item}>
+                  {item}
+                </li>
               ))}
             </ul>
+            {hasSnapshotExtras ? (
+              <button className="snapshot-toggle" onClick={() => setSnapshotExpanded((value) => !value)} type="button">
+                {snapshotExpanded ? "Show fewer details" : "Show more details"}
+              </button>
+            ) : null}
           </div>
         </div>
         <div className="current-details">
+          <h2 className="current-details-title">Current Details</h2>
           <div className="current-metric">
             <Wind aria-hidden="true" size={22} />
             <span>Wind</span>
@@ -634,6 +713,30 @@ export function HomeWeather({ alerts }: HomeWeatherProps) {
           Open Radar
         </Link>
       </section>
+      <details className="home-screen-tip">
+        <summary>Want quick access?</summary>
+        <div>
+          <p>Save Weather Now Kentucky to your home screen for a faster app-like experience.</p>
+          <div className="home-screen-steps">
+            <section>
+              <strong>iPhone / Safari</strong>
+              <ol>
+                <li>Tap the Share button.</li>
+                <li>Tap Add to Home Screen.</li>
+                <li>Tap Add.</li>
+              </ol>
+            </section>
+            <section>
+              <strong>Android / Chrome</strong>
+              <ol>
+                <li>Tap the three-dot menu.</li>
+                <li>Tap Add to Home screen or Install app.</li>
+                <li>Confirm.</li>
+              </ol>
+            </section>
+          </div>
+        </div>
+      </details>
     </section>
   );
 }

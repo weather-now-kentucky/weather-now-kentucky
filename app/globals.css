@@ -133,6 +133,10 @@ button {
   padding-bottom: 2px;
 }
 
+.nav-wrap {
+  position: relative;
+}
+
 .nav a {
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 4px;
@@ -286,6 +290,32 @@ h3 {
   background: transparent;
   border: 1px solid var(--line);
   color: var(--ink);
+}
+
+@media (max-width: 739px) {
+  .nav {
+    padding-right: 70px;
+    scrollbar-width: thin;
+  }
+
+  .nav-wrap::after {
+    align-items: center;
+    background: linear-gradient(90deg, rgba(11, 30, 51, 0), #0b1e33 42%);
+    bottom: 0;
+    color: #f8fafc;
+    content: "More \2192";
+    display: flex;
+    font-size: 0.76rem;
+    font-weight: 950;
+    justify-content: flex-end;
+    padding-right: 2px;
+    pointer-events: none;
+    position: absolute;
+    right: 0;
+    text-transform: uppercase;
+    top: 16px;
+    width: 82px;
+  }
 }
 
 .field {

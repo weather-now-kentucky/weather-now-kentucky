@@ -1,4 +1,4 @@
-import { AlertBanner } from "@/components/AlertBanner";
+import { AlertsClient } from "@/components/AlertsClient";
 import { SectionSponsorTag } from "@/components/SectionSponsorTag";
 import { getKentuckyAlerts, type WeatherAlert } from "@/lib/weather";
 
@@ -22,13 +22,7 @@ export default async function AlertsPage() {
         <p className="lede">Active Weather.gov alerts filtered to Kentucky, including event type, expiration, and affected areas.</p>
         <SectionSponsorTag sectionKey="alerts_main" />
       </section>
-      <section className="grid">
-        {error ? <p className="panel">{error}</p> : null}
-        {!error && alerts.length === 0 ? <p className="panel">No active Kentucky alerts are currently listed.</p> : null}
-        {alerts.map((alert) => (
-          <AlertBanner alert={alert} key={alert.id} />
-        ))}
-      </section>
+      <AlertsClient initialAlerts={alerts} initialError={error} />
     </>
   );
 }

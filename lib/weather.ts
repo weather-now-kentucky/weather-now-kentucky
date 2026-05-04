@@ -111,6 +111,7 @@ const latestObservationSchema = z.object({
 const nullableNumberArray = z.array(z.number().nullable()).optional();
 
 const openMeteoForecastSchema = z.object({
+  timezone: z.string().optional(),
   current: z.object({
     time: z.string().optional(),
     temperature_2m: z.number().nullable().optional(),
@@ -220,6 +221,7 @@ export type CurrentConditions = {
   pm10?: number;
   dust?: number;
   precipAmount?: number;
+  lightningDistanceMiles?: number;
   textDescription?: string;
   weatherCode?: number;
   observedAt?: string;
@@ -260,13 +262,18 @@ export type CurrentConditionsResponse = {
   hourly?: HourlyForecastHour[];
   locationLabel?: string;
   countyLabel?: string;
+  timezone?: string;
 };
 
-async function fetchJson(url: string, revalidate = 300) {
+async function fetchJson(url: string, revalidate = 300, timeoutMs = 10000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
   const response = await fetch(url, {
     headers,
-    next: { revalidate }
-  });
+    next: { revalidate },
+    signal: controller.signal
+  }).finally(() => clearTimeout(timeout));
 
   if (!response.ok) {
     throw new Error(`Weather.gov request failed: ${response.status} ${response.statusText}`);
@@ -480,7 +487,7 @@ function openMeteoCodeToText(code?: number | null) {
 async function getOpenMeteoWeatherBundle(
   lat: number,
   lon: number
-): Promise<{ currentConditions?: CurrentConditions; hourly: HourlyForecastHour[] }> {
+): Promise<{ currentConditions?: CurrentConditions; hourly: HourlyForecastHour[]; timezone?: string }> {
   const forecastUrl = new URL("https://api.open-meteo.com/v1/forecast");
   forecastUrl.searchParams.set("latitude", String(lat));
   forecastUrl.searchParams.set("longitude", String(lon));
@@ -559,12 +566,17 @@ async function getOpenMeteoWeatherBundle(
     source: "Open-Meteo"
   };
 
-  const now = Date.now();
   const forecastHourly = forecastData.hourly;
   const airQualityHourly = airQualityData?.hourly;
   const hourlyTimes = forecastHourly?.time ?? [];
+  const now = new Date();
+  const localNow = new Date(
+    now.toLocaleString("en-US", {
+      timeZone: forecastData.timezone || "America/New_York"
+    })
+  );
   const startIndex = Math.max(
-    hourlyTimes.findIndex((time) => new Date(time).getTime() >= now - 60 * 60 * 1000),
+    hourlyTimes.findIndex((time) => new Date(time).getTime() > localNow.getTime()),
     0
   );
 
@@ -599,7 +611,8 @@ async function getOpenMeteoWeatherBundle(
 
   return {
     currentConditions,
-    hourly
+    hourly,
+    timezone: forecastData.timezone
   };
 }
 
@@ -675,12 +688,35 @@ export async function getPointCurrentConditions(lat: number, lon: number): Promi
     currentConditions: weatherBundle.currentConditions,
     hourly: weatherBundle.hourly,
     locationLabel: city && state ? `${city}, ${state}` : undefined,
-    countyLabel: county
+    countyLabel: county,
+    timezone: weatherBundle.timezone
   };
 }
 
 export async function getKentuckyAlerts(): Promise<WeatherAlert[]> {
-  const alerts = alertsSchema.parse(await fetchJson(`${weatherBase}/alerts/active?area=KY`, 120));
+  const endpoint = `${weatherBase}/alerts/active?area=KY`;
+
+  if (process.env.NODE_ENV === "development") {
+    console.debug("WNK alerts endpoint", endpoint);
+  }
+
+  let alertsResponse: unknown;
+
+  try {
+    alertsResponse = await fetchJson(endpoint, 120, 8000);
+  } catch (error) {
+    if (process.env.NODE_ENV === "development") {
+      console.debug("WNK alerts fetch failed", {
+        endpoint,
+        status: error instanceof Error ? error.message : "unknown",
+        mode: "fallback"
+      });
+    }
+
+    throw error;
+  }
+
+  const alerts = alertsSchema.parse(alertsResponse);
 
   return alerts.features.map((feature) => ({
     id: feature.id,
