@@ -138,6 +138,7 @@ export function AdminDashboard() {
   const [teamHeadshotFile, setTeamHeadshotFile] = useState<File | null>(null);
   const [teamHeadshotPreview, setTeamHeadshotPreview] = useState("");
   const [isSavingTeamMember, setIsSavingTeamMember] = useState(false);
+  const activeSponsors = useMemo(() => sponsors.filter((sponsor) => sponsor.status !== "inactive"), [sponsors]);
 
   function formatDebugPayload(payload?: unknown) {
     if (payload === undefined) {
@@ -312,8 +313,8 @@ export function AdminDashboard() {
       debugAction("Add Placement validation started", {
         selectedPlacementId,
         placementPayload,
-        sponsorCount: sponsors.length,
-        selectedSponsor: sponsors.find((sponsor) => sponsor.id === placementPayload.sponsorId) ?? null
+        sponsorCount: activeSponsors.length,
+        selectedSponsor: activeSponsors.find((sponsor) => sponsor.id === placementPayload.sponsorId) ?? null
       });
 
       if (!placementPayload.sectionKey || !placementPayload.sectionLabel) {
@@ -583,8 +584,23 @@ export function AdminDashboard() {
       });
       debugAction("Firebase sponsor deactivate success", { sponsorId: sponsor.id });
       setMessage("Sponsor deactivated.");
+      setSponsors((current) => current.filter((candidate) => candidate.id !== sponsor.id));
+      setSponsorPlacements((current) => current.filter((placement) => placement.sponsorId !== sponsor.id));
+
+      if (placementForm.sponsorId === sponsor.id) {
+        setPlacementForm((current) => ({ ...current, sponsorId: "" }));
+      }
+
+      if (selectedSponsorId === sponsor.id) {
+        setSelectedSponsorId("");
+        setSponsorForm(emptySponsor);
+        setSponsorLogoFile(null);
+        setShowSponsorLogoUrl(false);
+      }
+
       try {
-        setSponsors(await getSponsors(false));
+        const refreshedSponsors = await getSponsors(false);
+        setSponsors(refreshedSponsors.filter((candidate) => candidate.status !== "inactive"));
       } catch (refreshError) {
         console.error("Sponsor deactivated, but refresh failed.", refreshError);
         debugAction("Firebase sponsor refresh error", refreshError);
@@ -976,7 +992,7 @@ export function AdminDashboard() {
 
         <div className="panel admin-list">
           <h2>Sponsor list</h2>
-          {sponsors.map((sponsor) => (
+          {activeSponsors.map((sponsor) => (
             <div className="list-row admin-list-row" key={sponsor.id}>
               <button className="list-row-main" onClick={() => editSponsor(sponsor)} type="button">
                 {sponsor.logoUrl ? <img alt="" className="admin-sponsor-thumb" src={sponsor.logoUrl} /> : null}
@@ -1021,7 +1037,7 @@ export function AdminDashboard() {
               value={placementForm.sponsorId}
             >
               <option value="">Choose sponsor</option>
-              {sponsors.map((sponsor) => (
+              {activeSponsors.map((sponsor) => (
                 <option key={sponsor.id} value={sponsor.id}>
                   {sponsor.name}
                 </option>
@@ -1108,7 +1124,7 @@ export function AdminDashboard() {
               </>
             ) : null}
           </div>
-          {sponsors.length === 0 ? <p className="status-line">Add a sponsor before creating a placement.</p> : null}
+          {activeSponsors.length === 0 ? <p className="status-line">Add an active sponsor before creating a placement.</p> : null}
         </form>
 
         <div className="panel admin-list">
