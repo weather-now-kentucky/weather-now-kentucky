@@ -18,9 +18,39 @@ const defaultRadarCenter: RadarCenter = {
 };
 
 const selectedLocationZoom = 8.5;
+const mainHrrrCycles = [0, 6, 12, 18];
+const hrrrCycleBufferMinutes = 90;
 
 function buildWeatherWiseUrl(center: RadarCenter) {
   return `https://web.weatherwise.app/#map=${center.zoom}/${center.lat.toFixed(4)}/${center.lon.toFixed(4)}&m=COMPOSITE&autoplay=1&ui=0`;
+}
+
+function formatHrrrRun(date: Date) {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  const hour = String(date.getUTCHours()).padStart(2, "0");
+
+  return `${year}_${month}_${day}_${hour}_00_00`;
+}
+
+function getLatestMainHrrrRun(now = new Date()) {
+  const bufferedNow = new Date(now.getTime() - hrrrCycleBufferMinutes * 60 * 1000);
+  const cycleHour = [...mainHrrrCycles].reverse().find((hour) => hour <= bufferedNow.getUTCHours()) ?? 18;
+  const run = new Date(
+    Date.UTC(bufferedNow.getUTCFullYear(), bufferedNow.getUTCMonth(), bufferedNow.getUTCDate(), cycleHour, 0, 0)
+  );
+
+  if (cycleHour === 18 && bufferedNow.getUTCHours() < 18) {
+    run.setUTCDate(run.getUTCDate() - 1);
+  }
+
+  return run;
+}
+
+function buildWeatherWiseFutureUrl(center: RadarCenter, selectedRun: string) {
+  // WeatherWise has not provided a public URL parameter for capping the HRRR animation at forecast hour 30 yet.
+  return `https://web.weatherwise.app/#map=${center.zoom}/${center.lat.toFixed(4)}/${center.lon.toFixed(4)}&m=MODEL&mid=HRRR&mr=CONUS&mn=${selectedRun}&mp=REFC_0_atmosphere_instant`;
 }
 
 export function RadarTabs() {
@@ -31,6 +61,9 @@ export function RadarTabs() {
   const [isLocating, setIsLocating] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const liveRadarUrl = useMemo(() => buildWeatherWiseUrl(center), [center]);
+  const latestMainHrrrRun = useMemo(() => getLatestMainHrrrRun(), []);
+  const latestMainHrrrRunId = useMemo(() => formatHrrrRun(latestMainHrrrRun), [latestMainHrrrRun]);
+  const futureRadarUrl = useMemo(() => buildWeatherWiseFutureUrl(center, latestMainHrrrRunId), [center, latestMainHrrrRunId]);
 
   function updateRadarCenter(lat: number, lon: number, label: string) {
     setCenter({ lat, lon, label, zoom: selectedLocationZoom });
@@ -159,14 +192,29 @@ export function RadarTabs() {
             </p>
           </>
         ) : (
-          <div className="radar-placeholder">
-            <span className="eyebrow">Future Radar</span>
-            <h2>Future radar coming soon.</h2>
-            <p>
-              WeatherWise HRRR future radar will be added here when the embed URL is available. It will use the same
-              selected center near {center.label}.
+          <>
+            <div className="future-radar-heading">
+              <span className="eyebrow">Future Radar</span>
+              <h2>HRRR Future Radar</h2>
+              <p>HRRR model guidance from the latest main run, capped near 30 hours when supported.</p>
+              <small>Selected main run: {latestMainHrrrRunId.replaceAll("_", " ")} UTC</small>
+            </div>
+            <iframe
+              allowFullScreen
+              className="radar-frame"
+              key={futureRadarUrl}
+              referrerPolicy="strict-origin-when-cross-origin"
+              src={futureRadarUrl}
+              title="WeatherWise HRRR future radar for Kentucky"
+            />
+            <p className="radar-fallback">
+              If the future radar does not load,{" "}
+              <a href={futureRadarUrl} rel="noopener noreferrer" target="_blank">
+                open WeatherWise HRRR guidance in a new tab
+              </a>
+              .
             </p>
-          </div>
+          </>
         )}
       </div>
 

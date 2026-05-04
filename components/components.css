@@ -1259,6 +1259,32 @@
   line-height: 1.5;
 }
 
+.future-radar-heading {
+  background: #111827;
+  border-bottom: 1px solid #334155;
+  display: grid;
+  gap: 5px;
+  padding: 14px;
+}
+
+.future-radar-heading h2 {
+  color: #f8fafc;
+  font-size: clamp(1.35rem, 4vw, 2rem);
+  text-transform: uppercase;
+}
+
+.future-radar-heading p,
+.future-radar-heading small {
+  color: #cbd5e1;
+  line-height: 1.4;
+}
+
+.future-radar-heading small {
+  font-size: 0.78rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
 .weatherwise-attribution {
   align-items: center;
   border-top: 1px solid #334155;
