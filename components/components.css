@@ -1660,6 +1660,50 @@
   text-transform: uppercase;
 }
 
+.future-radar-runbar {
+  align-items: center;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  justify-content: space-between;
+  padding: 12px;
+}
+
+.future-radar-runbar > div {
+  display: grid;
+  gap: 4px;
+}
+
+.future-radar-runbar p {
+  color: #e2e8f0;
+  font-size: 0.86rem;
+  font-weight: 850;
+}
+
+.future-radar-helper {
+  background: #172033;
+  border: 1px solid #334155;
+  border-left: 4px solid #64748b;
+  border-radius: 4px;
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+}
+
+.future-radar-helper p {
+  color: #e2e8f0;
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.future-radar-helper small {
+  color: #94a3b8;
+  margin-top: 2px;
+}
+
 .future-radar-recommendations {
   background: #0f172a;
   border: 1px solid #334155;

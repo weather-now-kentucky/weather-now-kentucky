@@ -12,6 +12,8 @@ type RadarCenter = {
   zoom: number;
 };
 
+type TimeZoneId = "America/New_York" | "America/Chicago";
+
 const defaultRadarCenter: RadarCenter = {
   lat: 38.017,
   lon: -85.887,
@@ -36,6 +38,10 @@ function formatHrrrRun(date: Date) {
   return `${year}_${month}_${day}_${hour}_00_00`;
 }
 
+function formatHrrrRunLabel(date: Date) {
+  return `${String(date.getUTCHours()).padStart(2, "0")}z`;
+}
+
 function getLatestMainHrrrRun(now = new Date()) {
   const bufferedNow = new Date(now.getTime() - hrrrCycleBufferMinutes * 60 * 1000);
   const cycleHour = [...mainHrrrCycles].reverse().find((hour) => hour <= bufferedNow.getUTCHours()) ?? 18;
@@ -51,8 +57,42 @@ function getLatestMainHrrrRun(now = new Date()) {
 }
 
 function buildWeatherWiseFutureUrl(center: RadarCenter, selectedRun: string) {
-  // WeatherWise has not provided a public URL parameter for capping the HRRR animation at forecast hour 30 yet.
+  // TODO: Ask WeatherWise whether embeds support playback speed, default animation speed, frame/time callbacks, or forecast-hour range caps.
   return `https://web.weatherwise.app/#map=${center.zoom}/${center.lat.toFixed(4)}/${center.lon.toFixed(4)}&m=MODEL&mid=HRRR&mr=CONUS&mn=${selectedRun}&mp=REFC_0_atmosphere_instant`;
+}
+
+function normalizeTimeZone(timezone?: string, longitude?: number): TimeZoneId {
+  if (timezone === "America/Chicago" || timezone === "US/Central") {
+    return "America/Chicago";
+  }
+
+  if (timezone === "America/New_York" || timezone === "US/Eastern") {
+    return "America/New_York";
+  }
+
+  return typeof longitude === "number" && longitude <= -86.75 ? "America/Chicago" : "America/New_York";
+}
+
+function formatTimeZoneLabel(timeZone: TimeZoneId) {
+  return timeZone === "America/Chicago" ? "Central Time" : "Eastern Time";
+}
+
+function formatLocalRunTime(date: Date, timeZone: TimeZoneId) {
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone,
+    timeZoneName: "short"
+  }).format(date);
+}
+
+function formatCurrentLocalTime(timeZone: TimeZoneId) {
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone,
+    timeZoneName: "short"
+  }).format(new Date());
 }
 
 export function RadarTabs() {
@@ -64,9 +104,17 @@ export function RadarTabs() {
   const [isSearching, setIsSearching] = useState(false);
   const [isLivePlaying, setIsLivePlaying] = useState(true);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [selectedTimeZone, setSelectedTimeZone] = useState<TimeZoneId>("America/New_York");
+  const [latestMainHrrrRun, setLatestMainHrrrRun] = useState(() => getLatestMainHrrrRun());
+  const [futureRadarReloadKey, setFutureRadarReloadKey] = useState(0);
   const liveRadarUrl = useMemo(() => buildWeatherWiseUrl(center, isLivePlaying), [center, isLivePlaying]);
-  const latestMainHrrrRun = useMemo(() => getLatestMainHrrrRun(), []);
   const latestMainHrrrRunId = useMemo(() => formatHrrrRun(latestMainHrrrRun), [latestMainHrrrRun]);
+  const latestMainHrrrRunLabel = useMemo(() => formatHrrrRunLabel(latestMainHrrrRun), [latestMainHrrrRun]);
+  const latestMainHrrrRunLocalTime = useMemo(
+    () => formatLocalRunTime(latestMainHrrrRun, selectedTimeZone),
+    [latestMainHrrrRun, selectedTimeZone]
+  );
+  const currentLocalTime = formatCurrentLocalTime(selectedTimeZone);
   const futureRadarUrl = useMemo(() => buildWeatherWiseFutureUrl(center, latestMainHrrrRunId), [center, latestMainHrrrRunId]);
   const selectedRadarUrl = activeTab === "live" ? liveRadarUrl : futureRadarUrl;
   const selectedRadarTitle = activeTab === "live" ? "WeatherWise live radar for Kentucky" : "WeatherWise HRRR future radar for Kentucky";
@@ -86,6 +134,7 @@ export function RadarTabs() {
     });
     setLocationQuery(saved.query ?? "");
     setLocationStatus(`Using saved location: ${saved.displayName}.`);
+    setSelectedTimeZone(normalizeTimeZone(saved.timezone, saved.longitude));
   }, []);
 
   useEffect(() => {
@@ -109,17 +158,25 @@ export function RadarTabs() {
   }, [isExpanded]);
 
   function updateRadarCenter(lat: number, lon: number, label: string, source: "detected" | "searched", query?: string) {
+    const timeZone = normalizeTimeZone(undefined, lon);
     setCenter({ lat, lon, label, zoom: selectedLocationZoom });
+    setSelectedTimeZone(timeZone);
     setLocationStatus(`Radar centered on ${label}.`);
     saveWeatherLocation(
       buildWeatherLocation({
         displayName: label,
         latitude: lat,
         longitude: lon,
+        timezone: timeZone,
         source,
         query
       })
     );
+  }
+
+  function refreshModelRun() {
+    setLatestMainHrrrRun(getLatestMainHrrrRun());
+    setFutureRadarReloadKey((value) => value + 1);
   }
 
   function handleUseMyLocation() {
@@ -261,7 +318,25 @@ export function RadarTabs() {
             <div className="future-radar-heading">
               <span className="eyebrow">Future Radar</span>
               <h2>HRRR Future Radar</h2>
-              <small>Selected main run: {latestMainHrrrRunId.replaceAll("_", " ")} UTC</small>
+              <div className="future-radar-runbar">
+                <div>
+                  <small>Using latest main HRRR run: {latestMainHrrrRunLabel}</small>
+                  <p>
+                    Model run: {latestMainHrrrRunLabel} / {latestMainHrrrRunLocalTime} {formatTimeZoneLabel(selectedTimeZone)}
+                  </p>
+                  <p>Your local time: {currentLocalTime}</p>
+                </div>
+                <button className="radar-control-button" onClick={refreshModelRun} type="button">
+                  Refresh Model Run
+                </button>
+              </div>
+              <div className="future-radar-helper">
+                <p>Future radar updates automatically using the latest main HRRR run. No model run selection needed.</p>
+                <p>Future radar starts from the selected HRRR run and advances forward in time.</p>
+                <p>Use the play button inside the radar to animate.</p>
+                <p>Tip: Use the WeatherWise playback controls to slow the animation if it moves too fast.</p>
+                <small>Future radar guidance: now through roughly 30 hours.</small>
+              </div>
               <div className="future-radar-recommendations">
                 <strong>Recommendations</strong>
                 <ul>
@@ -276,7 +351,7 @@ export function RadarTabs() {
             <iframe
               allowFullScreen
               className="radar-frame"
-              key={futureRadarUrl}
+              key={`${futureRadarUrl}-${futureRadarReloadKey}`}
               referrerPolicy="strict-origin-when-cross-origin"
               src={futureRadarUrl}
               title="WeatherWise HRRR future radar for Kentucky"
