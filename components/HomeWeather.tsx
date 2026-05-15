@@ -24,7 +24,15 @@ import { OutdoorConditions } from "@/components/OutdoorConditions";
 import { SectionSponsorTag } from "@/components/SectionSponsorTag";
 import { WeatherAlertBanner } from "@/components/WeatherAlertBanner";
 import { getIncomingWeatherAlert } from "@/lib/incomingWeather";
-import { analyzeRainSignal, buildRainAwareInsight, buildRainAwareSnapshotSummary, isStormWeatherCode } from "@/lib/weatherIntelligence";
+import {
+  analyzeRainSignal,
+  buildRainAwareInsight,
+  buildRainAwareSnapshotSummary,
+  isStormWeatherCode,
+  resolvePrimaryWeatherState,
+  type PrimaryWeatherState,
+  type RainSignal
+} from "@/lib/weatherIntelligence";
 import { buildWeatherLocation, clearWeatherLocation, readWeatherLocation, saveWeatherLocation } from "@/lib/weatherLocation";
 import type { CurrentConditions, HourlyForecastHour, WeatherAlert } from "@/lib/weather";
 
@@ -179,42 +187,94 @@ function describeTemperatureTrend(current: CurrentConditions | null, hourly: Hou
   return `Temps holding near ${currentTemp}\u00b0 for the next few hours.`;
 }
 
-function buildWeatherSnapshot(current: CurrentConditions | null, hourly: HourlyForecastHour[], rainSignal = analyzeRainSignal(current, hourly)) {
-  const nextRainIndex =
-    rainSignal.nextWetHourIndex !== null && rainSignal.nextWetHourIndex < 6 ? rainSignal.nextWetHourIndex : -1;
-  const nextRain = nextRainIndex >= 0 ? hourly[nextRainIndex] : undefined;
+function dedupeSnapshotMessages(messages: string[]) {
+  const seen = new Set<string>();
+
+  return messages.filter((message) => {
+    const key = message
+      .toLowerCase()
+      .replace(/[^\w\s]/g, "")
+      .replace(/\b(right now|currently|nearby|for now)\b/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (!key || seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function headlineForWeatherState(state: PrimaryWeatherState) {
+  const copy: Record<PrimaryWeatherState, string> = {
+    SEVERE_ACTIVE: "Severe weather is active nearby.",
+    LIGHTNING_NEARBY: "Lightning is close enough to take seriously.",
+    RAINING_NOW: "Rain is moving through right now.",
+    STORMS_NEARBY: "Storms are nearby or possible soon.",
+    RAIN_APPROACHING: "Rain may move in soon.",
+    RAIN_LATER: "Rain chances increase later today.",
+    QUIET_DRY: "Quiet weather for now."
+  };
+
+  return copy[state];
+}
+
+function precipForWeatherState(state: PrimaryWeatherState, rainSignal: RainSignal) {
+  const copy: Record<PrimaryWeatherState, string> = {
+    SEVERE_ACTIVE: "Storms may impact your area.",
+    LIGHTNING_NEARBY: "Lightning is the main safety concern.",
+    RAINING_NOW: "Showers are ongoing nearby.",
+    STORMS_NEARBY: "Thunder is possible with nearby storms.",
+    RAIN_APPROACHING: "Watching nearby showers.",
+    RAIN_LATER: "Showers are possible later.",
+    QUIET_DRY: "No rain nearby."
+  };
+
+  if (state === "RAIN_APPROACHING" && rainSignal.nextWetHourIndex !== null && rainSignal.nextWetHourIndex <= 3) {
+    return `Rain signal in about ${Math.max(rainSignal.nextWetHourIndex, 1)} hour${rainSignal.nextWetHourIndex === 1 ? "" : "s"}.`;
+  }
+
+  return copy[state];
+}
+
+function travelForWeatherState(state: PrimaryWeatherState) {
+  const copy: Record<PrimaryWeatherState, string> = {
+    SEVERE_ACTIVE: "Stay weather-aware.",
+    LIGHTNING_NEARBY: "Delay outdoor travel if possible.",
+    RAINING_NOW: "Wet roads possible.",
+    STORMS_NEARBY: "Use caution if storms develop.",
+    RAIN_APPROACHING: "Roads may turn wet.",
+    RAIN_LATER: "Check radar before later plans.",
+    QUIET_DRY: "Good travel conditions."
+  };
+
+  return copy[state];
+}
+
+function buildWeatherSnapshot(
+  current: CurrentConditions | null,
+  hourly: HourlyForecastHour[],
+  rainSignal = analyzeRainSignal(current, hourly),
+  state = resolvePrimaryWeatherState(rainSignal)
+) {
   const maxGust = hourly
     .slice(0, 6)
     .map((hour) => hour.windGust)
     .filter((gust): gust is number => typeof gust === "number")
     .reduce((max, gust) => Math.max(max, gust), current?.windGust ?? 0);
   const windDirection = current?.windDirection ? `${current.windDirection} ` : "";
-  const summary = buildRainAwareSnapshotSummary(rainSignal);
+  const windMessage = maxGust > 0 ? `${windDirection}wind gusts may reach ${maxGust} mph.` : "Wind stays light based on the next few hours.";
 
-  return [
-    rainSignal.currentWet || rainSignal.nearbyWet
-      ? rainSignal.lightningWithin20Miles
-        ? "Lightning is close enough to avoid outdoor plans."
-        : rainSignal.stormCurrent || rainSignal.stormNextHour || rainSignal.stormNext3Hours
-        ? "Storms are nearby or possible soon."
-        : "Rain is nearby with showers possible shortly."
-      : nextRain
-        ? rainSignal.likelyNextHour || nextRainIndex === 0
-        ? "Rain or showers are nearby over the next hour."
-        : rainSignal.likelyNext3Hours
-          ? "Dry now, but rain may move in over the next few hours."
-          : `Rain chance increases in about ${nextRainIndex} hour${nextRainIndex === 1 ? "" : "s"}.`
-        : rainSignal.likely3To6Hours || rainSignal.storm3To6Hours
-          ? rainSignal.storm3To6Hours
-            ? "Storms are possible later, so keep an eye on radar."
-            : "Showers may move in later in the next several hours."
-        : rainSignal.laterToday
-          ? "Periods of rain are possible today."
-          : "Quiet right now, with mostly dry conditions expected.",
+  return dedupeSnapshotMessages([
+    headlineForWeatherState(state),
+    precipForWeatherState(state, rainSignal),
     describeTemperatureTrend(current, hourly),
-    maxGust > 0 ? `${windDirection}wind gusts may reach ${maxGust} mph.` : "Wind stays light based on the next few hours.",
-    summary
-  ];
+    windMessage,
+    travelForWeatherState(state),
+    buildRainAwareSnapshotSummary(rainSignal, state)
+  ]);
 }
 
 export function HomeWeather({ alerts }: HomeWeatherProps) {
@@ -257,8 +317,15 @@ export function HomeWeather({ alerts }: HomeWeatherProps) {
   );
   const currentVisualClass = conditionClass(currentSummary);
   const rainSignal = useMemo(() => analyzeRainSignal(observed, hourlyForecast), [observed, hourlyForecast]);
-  const currentInsight = buildRainAwareInsight(observed, hourlyForecast);
-  const weatherSnapshot = useMemo(() => buildWeatherSnapshot(observed, hourlyForecast, rainSignal), [observed, hourlyForecast, rainSignal]);
+  const primaryWeatherState = useMemo(
+    () => resolvePrimaryWeatherState(rainSignal, { hasActiveWarning: locationAlerts.length > 0 }),
+    [locationAlerts.length, rainSignal]
+  );
+  const currentInsight = buildRainAwareInsight(observed, hourlyForecast, primaryWeatherState);
+  const weatherSnapshot = useMemo(
+    () => buildWeatherSnapshot(observed, hourlyForecast, rainSignal, primaryWeatherState),
+    [observed, hourlyForecast, rainSignal, primaryWeatherState]
+  );
   const incomingAlert = getIncomingWeatherAlert(locationLabel, observed, hourlyForecast);
   const hasSnapshotExtras = weatherSnapshot.length > 3;
   const savedLocationMessage = hasSavedLocation && locationLabel !== "Loading location..." ? `Using saved location: ${locationLabel}` : "";
@@ -286,9 +353,10 @@ export function HomeWeather({ alerts }: HomeWeatherProps) {
       rainNearbyFlag: rainSignal.nearbyWet,
       thunderStormFlag: rainSignal.stormCurrent || rainSignal.stormNext3Hours || rainSignal.storm3To6Hours || hourlyForecast.slice(0, 6).some((hour) => isStormWeatherCode(hour.weatherCode)),
       lightningWithin20Miles: rainSignal.lightningWithin20Miles,
+      primaryWeatherState,
       finalSnapshotPhrase: weatherSnapshot[0]
     });
-  }, [hourlyForecast, location, locationLabel, observed, rainSignal, weatherSnapshot]);
+  }, [hourlyForecast, location, locationLabel, observed, primaryWeatherState, rainSignal, weatherSnapshot]);
 
   const applyFallbackLocation = useCallback((messageText = "Location unavailable. Showing Louisville, KY.") => {
     requestIdRef.current += 1;

@@ -4,7 +4,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { LiveNowBanner } from "@/components/LiveNowBanner";
 import { SevereModeLabel } from "@/components/SevereModeLabel";
-import { ThemeToggle } from "@/components/ThemeToggle";
+import { SiteNavigation, type SiteNavItem } from "@/components/SiteNavigation";
 import { isSevereWeatherMode } from "@/lib/alertPriority";
 import { getSiteSettings } from "@/lib/content";
 import { getKentuckyAlerts, type WeatherAlert } from "@/lib/weather";
@@ -18,14 +18,15 @@ export const metadata: Metadata = {
   description: "Kentucky forecast, radar, alerts, live weather coverage, and local updates."
 };
 
-const navItems = [
+const navItems: SiteNavItem[] = [
   { href: "/", label: "Home" },
+  { href: "/outlook", label: "7 Day" },
   { href: "/radar", label: "Radar" },
+  { href: "/live", label: "LIVE" },
   { href: "/alerts", label: "Alerts" },
-  { href: "/live", label: "Live" },
-  { href: "/outlook", label: "Outlook" },
-  { href: "/team", label: "Team" },
   { href: "/blog", label: "Blog" },
+  { href: "/wolf-country", label: "Wolf" },
+  { href: "/team", label: "Team" },
   { href: "/admin", label: "Admin" }
 ];
 
@@ -66,16 +67,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                   </span>
                 </Link>
               </div>
-              <div className="nav-wrap">
-                <nav aria-label="Main navigation" className="nav">
-                  {navItems.map((item) => (
-                    <Link href={item.href} key={item.href}>
-                      {item.label}
-                    </Link>
-                  ))}
-                  <ThemeToggle />
-                </nav>
-              </div>
+              <SiteNavigation items={navItems} />
             </div>
           </header>
           <main className="main">{children}</main>

@@ -24,6 +24,15 @@ export type RainSignal = {
   nextWetHourIndex: number | null;
 };
 
+export type PrimaryWeatherState =
+  | "SEVERE_ACTIVE"
+  | "LIGHTNING_NEARBY"
+  | "RAINING_NOW"
+  | "STORMS_NEARBY"
+  | "RAIN_APPROACHING"
+  | "RAIN_LATER"
+  | "QUIET_DRY";
+
 function hasNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
@@ -99,79 +108,104 @@ export function analyzeRainSignal(current: CurrentConditions | null, hourly: Hou
   };
 }
 
-export function buildRainAwareInsight(current: CurrentConditions | null, hourly: HourlyForecastHour[]) {
-  const signal = analyzeRainSignal(current, hourly);
-  const temp = current?.temperature;
+export function resolvePrimaryWeatherState(signal: RainSignal, options: { hasActiveWarning?: boolean } = {}): PrimaryWeatherState {
+  if (options.hasActiveWarning) {
+    return "SEVERE_ACTIVE";
+  }
 
   if (signal.lightningWithin20Miles) {
+    return "LIGHTNING_NEARBY";
+  }
+
+  if (signal.stormCurrent) {
+    return "STORMS_NEARBY";
+  }
+
+  if (signal.currentWet) {
+    return "RAINING_NOW";
+  }
+
+  if (signal.stormNextHour || signal.stormNext3Hours) {
+    return "STORMS_NEARBY";
+  }
+
+  if (signal.nearbyWet || signal.likelyNextHour || signal.likelyNext3Hours) {
+    return "RAIN_APPROACHING";
+  }
+
+  if (signal.storm3To6Hours || signal.likely3To6Hours || signal.stormLater || signal.laterToday) {
+    return "RAIN_LATER";
+  }
+
+  return "QUIET_DRY";
+}
+
+export function buildRainAwareInsight(
+  current: CurrentConditions | null,
+  hourly: HourlyForecastHour[],
+  state = resolvePrimaryWeatherState(analyzeRainSignal(current, hourly))
+) {
+  const temp = current?.temperature;
+
+  if (state === "SEVERE_ACTIVE") {
+    return "Severe weather is active nearby. Stay weather-aware and keep alerts close.";
+  }
+
+  if (state === "LIGHTNING_NEARBY") {
     return "Lightning is close enough to make outdoor plans unsafe right now.";
   }
 
-  if (signal.stormCurrent || signal.stormNextHour || signal.stormNext3Hours) {
+  if (state === "STORMS_NEARBY") {
     return "Storms are close enough to watch carefully. Keep radar handy.";
   }
 
-  if (signal.currentWet || signal.nearbyWet) {
+  if (state === "RAINING_NOW") {
+    return "Rain is moving through right now around your location.";
+  }
+
+  if (state === "RAIN_APPROACHING") {
     return "Rain is nearby with showers possible shortly.";
   }
 
-  if (signal.likelyNextHour) {
-    return "Dry now, but rain may move in shortly around your location.";
-  }
-
-  if (signal.likelyNext3Hours) {
-    return "Dry now, but rain may move in over the next few hours.";
-  }
-
-  if (signal.likely3To6Hours || signal.storm3To6Hours) {
-    return signal.storm3To6Hours
-      ? "Quiet right now, but storms are possible later, so keep an eye on radar."
-      : "Mostly dry now, with showers possible later in the next several hours.";
-  }
-
-  if (signal.laterToday) {
-    return "Periods of rain are possible today, though the next few hours look quieter.";
+  if (state === "RAIN_LATER") {
+    return "Rain or storms may become more likely later today.";
   }
 
   if (hasNumber(temp) && temp <= 45) {
-    return "Cool and quiet right now with Kentucky weather holding steady nearby.";
+    return "Cool conditions are in place with no immediate rain signal.";
   }
 
   if (hasNumber(temp) && temp >= 85) {
     return "Warm conditions are in place. Watch heat, humidity, and afternoon storm chances.";
   }
 
-  return "Conditions look steady for now, with the next few hours worth watching.";
+  return "Quiet weather for now with the next few hours looking steady.";
 }
 
-export function buildRainAwareSnapshotSummary(signal: RainSignal) {
-  if (signal.lightningWithin20Miles) {
+export function buildRainAwareSnapshotSummary(signal: RainSignal, state = resolvePrimaryWeatherState(signal)) {
+  if (state === "SEVERE_ACTIVE") {
+    return "Severe weather is the main concern nearby.";
+  }
+
+  if (state === "LIGHTNING_NEARBY") {
     return "Lightning nearby is the main outdoor safety concern.";
   }
 
-  if (signal.stormCurrent || signal.stormNextHour || signal.stormNext3Hours) {
+  if (state === "STORMS_NEARBY") {
     return "Thunder or storms are the main weather concern.";
   }
 
-  if (signal.currentWet || signal.nearbyWet) {
-    return "Rain nearby is the main short-term weather signal.";
+  if (state === "RAINING_NOW") {
+    return "Ongoing rain is the main short-term weather signal.";
   }
 
-  if (signal.likelyNextHour) {
-    return "Rain may arrive shortly.";
+  if (state === "RAIN_APPROACHING") {
+    return "Nearby showers are the main short-term weather signal.";
   }
 
-  if (signal.likelyNext3Hours) {
-    return "Mostly dry now, but showers may move in soon.";
-  }
-
-  if (signal.likely3To6Hours) {
-    return "Showers may arrive later in the next several hours.";
-  }
-
-  if (signal.laterToday) {
+  if (state === "RAIN_LATER") {
     return "Showers are possible later today.";
   }
 
-  return "Quiet right now, with mostly dry conditions expected.";
+  return "No rain nearby in the short term.";
 }
